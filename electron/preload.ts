@@ -1196,4 +1196,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	studioYouTubeStatus: () => {
 		return ipcRenderer.invoke("studio-youtube-status");
 	},
+	studioOpenWindow: () => {
+		return ipcRenderer.invoke("studio-open-window");
+	},
 });

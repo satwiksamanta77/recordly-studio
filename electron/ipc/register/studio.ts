@@ -471,4 +471,12 @@ export function registerStudioHandlers() {
 			return { success: false, error: toErrorMessage(error) };
 		}
 	});
+
+	ipcMain.handle("studio-open-window", async () => {
+		// Lazy import: windows.ts lazily imports this registrar on Studio-window
+		// close, so a top-level import here would create a module cycle.
+		const { openStudioWindow } = await import("../../windows");
+		openStudioWindow();
+		return { success: true };
+	});
 }

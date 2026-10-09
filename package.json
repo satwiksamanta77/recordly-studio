@@ -12,7 +12,7 @@
 		"url": "https://github.com/satwiksamanta77/recordly-studio/issues"
 	},
 	"private": false,
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"type": "module",
 	"scripts": {
 		"dev": "vite --config vite.config.ts",

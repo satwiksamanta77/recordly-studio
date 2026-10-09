@@ -1156,6 +1156,7 @@ interface Window {
 		}) => Promise<StudioYouTubeConnectResult>;
 		studioYouTubeDisconnect: () => Promise<{ success: boolean; error?: string }>;
 		studioYouTubeStatus: () => Promise<StudioYouTubeStatus>;
+		studioOpenWindow: () => Promise<{ success: boolean }>;
 	};
 }
 

@@ -2,7 +2,7 @@ import { FeedbackDialog } from "@/components/feedback/FeedbackDialog";
 import { RecordNewButton } from "./RecordNewButton";
 import { SidebarCards } from "./SidebarCards";
 import { FolderRow } from "./FolderRow";
-import { Cloud, File, GearSix, House, Plus, UserCircle } from "@/components/ui/icons";
+import { Cloud, File, GearSix, House, Plus, UserCircle, VideoCamera } from "@/components/ui/icons";
 
 import { Button } from "@/components/ui/button";
 
@@ -51,7 +51,16 @@ export function DashboardSidebar({
 					/>
 					<span className="text-[15px] font-semibold tracking-tight">Recordly</span>
 				</div>
-				<RecordNewButton busy={busy} run={run} className="mb-5 w-full" />
+				<RecordNewButton busy={busy} run={run} className="mb-3 w-full" />
+				<Button
+					variant="secondary"
+					className="mb-5 w-full justify-start gap-2"
+					onClick={() => window.electronAPI?.studioOpenWindow?.()}
+					title="Open Recordly Studio — live streaming & capture sources (OBS-style)"
+				>
+					<VideoCamera weight="fill" className="size-[18px]" />
+					Open Studio
+				</Button>
 				<nav className="space-y-1">
 					<Button
 						variant="ghost"
