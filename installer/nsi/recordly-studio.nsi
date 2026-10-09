@@ -11,7 +11,8 @@
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\RecordlyStudio"
 
 Name "${APP_NAME}"
-OutFile "release/Recordly-Studio-Setup-${APP_VERSION}.exe"
+; Output path is relative to this .nsi file's directory.
+OutFile "..\..\release\Recordly-Studio-Setup-${APP_VERSION}.exe"
 InstallDir "$PROGRAMFILES64\${APP_NAME}"
 RequestExecutionLevel admin
 
