@@ -43,6 +43,7 @@ export function GoLiveWindow() {
 	const [key, setKey] = useState("");
 	const [useManualKey, setUseManualKey] = useState(false);
 	const [clientId, setClientId] = useState("");
+	const [clientSecret, setClientSecret] = useState("");
 	const [showClientIdHelp, setShowClientIdHelp] = useState(false);
 	const [ytConnected, setYtConnected] = useState(false);
 	const [ytChannel, setYtChannel] = useState("");
@@ -64,11 +65,12 @@ export function GoLiveWindow() {
 		(async () => {
 			const api = getStudioApi();
 			try {
-				const [rawSettings, rawKey, rawClientId, ytStatus, studioState] =
+				const [rawSettings, rawKey, rawClientId, rawClientSecret, ytStatus, studioState] =
 					await Promise.all([
 						api?.studioSettingsGet?.(STREAM_SETTINGS_KEY),
 						api?.studioSecretGet?.(STREAM_KEY_SECRET),
 						api?.studioSecretGet?.(YT_CLIENT_ID_SECRET),
+						api?.studioSecretGet?.("studio.youtube.clientSecret"),
 						api?.studioYouTubeStatus?.(),
 						api?.studioGetState?.(),
 					]);
@@ -90,6 +92,7 @@ export function GoLiveWindow() {
 				}
 				if (typeof rawKey === "string") setKey(rawKey);
 				if (typeof rawClientId === "string") setClientId(rawClientId);
+				if (typeof rawClientSecret === "string") setClientSecret(rawClientSecret);
 				if (ytStatus) {
 					setYtConnected(ytStatus.connected);
 					setYtChannel(ytStatus.channelTitle ?? "");
@@ -143,20 +146,33 @@ export function GoLiveWindow() {
 		setStatus("Opening your browser for Google sign-in…");
 		try {
 			const api = getStudioApi();
-			const result = await api?.studioYouTubeConnect?.({ clientId: clientId.trim() });
+			const result = await api?.studioYouTubeConnect?.({
+				clientId: clientId.trim(),
+				clientSecret: clientSecret.trim() || undefined,
+			});
 			if (!result || !result.success) {
 				throw new Error(result?.error ?? "YouTube connection failed.");
 			}
 			setYtConnected(true);
 			setYtChannel(result.channelTitle ?? "");
 			await api?.studioSecretSet?.(YT_CLIENT_ID_SECRET, clientId.trim());
+			if (clientSecret.trim()) {
+				await api?.studioSecretSet?.("studio.youtube.clientSecret", clientSecret.trim());
+			}
 			setStatus(
 				result.channelTitle
 					? `Connected as ${result.channelTitle}. You're ready to go live.`
 					: "YouTube account connected. You're ready to go live.",
 			);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "YouTube connection failed.");
+			const message = e instanceof Error ? e.message : "YouTube connection failed.";
+			// Google returns "client_secret is missing" when the OAuth client was
+			// created as "Web application" instead of "Desktop app".
+			setError(
+				/secret/i.test(message)
+					? `${message} — paste your Client Secret below, or recreate the OAuth client as a "Desktop app" (which needs no secret).`
+					: message,
+			);
 			setStatus(null);
 		} finally {
 			setBusy(false);
@@ -410,7 +426,8 @@ export function GoLiveWindow() {
 													<li>Enable “YouTube Data API v3”.</li>
 													<li>
 														Credentials → Create Credentials → OAuth client ID →
-														“Desktop app”.
+														choose <strong className="text-zinc-200">“Desktop app”</strong>{" "}
+														(not “Web application”).
 													</li>
 													<li>Paste the Client ID below, then connect.</li>
 												</ol>
@@ -420,6 +437,21 @@ export function GoLiveWindow() {
 														value={clientId}
 														onChange={(e) => setClientId(e.target.value)}
 														placeholder="xxxx.apps.googleusercontent.com"
+														className={inputClass}
+													/>
+												</label>
+												<label className="mt-2.5 block">
+													<span className={labelClass}>
+														Client Secret{" "}
+														<span className="text-zinc-500">
+															(only if Google asks for one)
+														</span>
+													</span>
+													<input
+														type="password"
+														value={clientSecret}
+														onChange={(e) => setClientSecret(e.target.value)}
+														placeholder="Only for “Web application” clients"
 														className={inputClass}
 													/>
 												</label>
