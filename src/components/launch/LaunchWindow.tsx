@@ -42,7 +42,6 @@ import { MicPopover } from "./popovers/MicPopover";
 import { SourcePopover } from "./popovers/SourcePopover";
 import { WebcamPopover } from "./popovers/WebcamPopover";
 import { RecordingControls } from "./RecordingControls";
-import { GoLiveDialog } from "./GoLiveDialog";
 
 export function LaunchWindow() {
 	return (
@@ -81,7 +80,6 @@ function LaunchWindowContent() {
 	} = useScreenRecorder();
 
 	const { elapsed, formatTime } = useRecordingTimer(recording, paused);
-	const [goLiveOpen, setGoLiveOpen] = useState(false);
 	const [studioStreaming, setStudioStreaming] = useState(false);
 	const hudContentRef = useRef<HTMLDivElement>(null);
 	const hudBarRef = useRef<HTMLDivElement>(null);
@@ -396,7 +394,7 @@ function LaunchWindowContent() {
 				className={`${styles.electronNoDrag} gap-2 px-3 shrink-0 ${
 					studioStreaming ? "text-red-500" : ""
 				}`}
-				onClick={() => setGoLiveOpen(true)}
+				onClick={() => window.electronAPI?.studioOpenGoLiveWindow?.()}
 				title={studioStreaming ? "Live streaming — click to manage" : "Go live (stream)"}
 			>
 				<span
@@ -592,7 +590,6 @@ function LaunchWindowContent() {
 					</div>
 				</div>
 			</div>
-			{goLiveOpen && <GoLiveDialog onClose={() => setGoLiveOpen(false)} />}
 		</HudInteractionContext.Provider>
 	);
 }

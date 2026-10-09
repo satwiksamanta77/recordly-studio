@@ -1172,6 +1172,7 @@ interface Window {
 			broadcastStatus: "live" | "complete";
 		}) => Promise<{ success: boolean; error?: string }>;
 		studioOpenWindow: () => Promise<{ success: boolean }>;
+		studioOpenGoLiveWindow: () => Promise<{ success: boolean }>;
 	};
 }
 

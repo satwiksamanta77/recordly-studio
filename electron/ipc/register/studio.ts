@@ -522,4 +522,10 @@ export function registerStudioHandlers() {
 		openStudioWindow();
 		return { success: true };
 	});
+
+	ipcMain.handle("studio-open-golive-window", async () => {
+		const { openGoLiveWindow } = await import("../../windows");
+		openGoLiveWindow();
+		return { success: true };
+	});
 }

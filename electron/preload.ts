@@ -1212,4 +1212,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	studioOpenWindow: () => {
 		return ipcRenderer.invoke("studio-open-window");
 	},
+	studioOpenGoLiveWindow: () => {
+		return ipcRenderer.invoke("studio-open-golive-window");
+	},
 });

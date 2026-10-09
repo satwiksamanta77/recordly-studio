@@ -33,7 +33,11 @@ function formatElapsed(ms: number): string {
 	return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
 }
 
-export function GoLiveDialog({ onClose }: { onClose: () => void }) {
+/**
+ * Full-window Go Live experience (windowType=golive). A dedicated centered
+ * window — never rendered inside the tiny HUD bar.
+ */
+export function GoLiveWindow() {
 	const [service, setService] = useState<StreamService>("youtube");
 	const [server, setServer] = useState(SERVICE_PRESETS.youtube.server);
 	const [key, setKey] = useState("");
@@ -49,12 +53,12 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 	const [liveSince, setLiveSince] = useState<number | null>(null);
 	const [now, setNow] = useState(() => Date.now());
 	const [busy, setBusy] = useState(false);
+	const [status, setStatus] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const broadcastIdRef = useRef<string | null>(null);
 
 	const youtubeOAuth = service === "youtube" && !useManualKey;
 
-	// Load saved settings + YouTube status + live state.
 	useEffect(() => {
 		let cancelled = false;
 		(async () => {
@@ -104,9 +108,8 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 			const s = next as { state?: unknown; mode?: unknown; startedAt?: unknown };
 			const live = s.state === "running" && s.mode === "stream";
 			setIsLive(live);
-			setLiveSince(
-				live && typeof s.startedAt === "number" ? (s.startedAt as number) : null,
-			);
+			setLiveSince(live && typeof s.startedAt === "number" ? s.startedAt : null);
+			if (!live) setStatus(null);
 		});
 		return () => {
 			cancelled = true;
@@ -114,7 +117,6 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 		};
 	}, []);
 
-	// Tick the LIVE timer.
 	useEffect(() => {
 		if (!isLive) return;
 		const t = setInterval(() => setNow(Date.now()), 1000);
@@ -124,30 +126,38 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 	const handleServiceChange = (next: StreamService) => {
 		setService(next);
 		setError(null);
+		setStatus(null);
 		if (next !== "custom") setServer(SERVICE_PRESETS[next].server);
 		if (next !== "youtube") setUseManualKey(false);
 	};
 
 	const handleConnectYouTube = async () => {
 		setError(null);
+		setStatus(null);
 		if (!clientId.trim()) {
-			setError("Paste your Google OAuth Client ID first (see setup guide below).");
+			setError("Paste your Google OAuth Client ID first — see the setup guide below.");
 			setShowClientIdHelp(true);
 			return;
 		}
 		setBusy(true);
+		setStatus("Opening your browser for Google sign-in…");
 		try {
 			const api = getStudioApi();
 			const result = await api?.studioYouTubeConnect?.({ clientId: clientId.trim() });
-			if (!result?.success) {
-				setError(result?.error ?? "YouTube connection failed.");
-				return;
+			if (!result || !result.success) {
+				throw new Error(result?.error ?? "YouTube connection failed.");
 			}
 			setYtConnected(true);
 			setYtChannel(result.channelTitle ?? "");
 			await api?.studioSecretSet?.(YT_CLIENT_ID_SECRET, clientId.trim());
+			setStatus(
+				result.channelTitle
+					? `Connected as ${result.channelTitle}. You're ready to go live.`
+					: "YouTube account connected. You're ready to go live.",
+			);
 		} catch (e) {
 			setError(e instanceof Error ? e.message : "YouTube connection failed.");
+			setStatus(null);
 		} finally {
 			setBusy(false);
 		}
@@ -155,6 +165,7 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 
 	const handleDisconnectYouTube = async () => {
 		setError(null);
+		setStatus(null);
 		setBusy(true);
 		try {
 			await getStudioApi()?.studioYouTubeDisconnect?.();
@@ -170,8 +181,7 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 	const buildDisplayScene = useCallback(async () => {
 		const api = getStudioApi();
 		const displays = (await api?.studioGetDisplays?.()) as DisplayInfo[] | undefined;
-		const primary =
-			displays?.find((d) => d.x === 0 && d.y === 0) ?? displays?.[0];
+		const primary = displays?.find((d) => d.x === 0 && d.y === 0) ?? displays?.[0];
 		if (!primary) {
 			throw new Error("No display found to stream.");
 		}
@@ -179,14 +189,7 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 		return {
 			scene: {
 				items: [
-					{
-						sourceId,
-						x: 0,
-						y: 0,
-						width: 1920,
-						height: 1080,
-						visible: true,
-					},
+					{ sourceId, x: 0, y: 0, width: 1920, height: 1080, visible: true },
 				],
 			},
 			sources: [
@@ -213,14 +216,13 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 				if (!ytConnected) {
 					throw new Error("Connect your YouTube account first.");
 				}
-				// Create the YouTube broadcast + stream on demand: title, description
-				// and privacy are applied automatically. Nothing to pre-create.
+				setStatus("Creating your YouTube stream…");
 				const setup = await api?.studioYouTubeSetupLive?.({
 					title: title.trim() || "Live Stream",
 					description: description.trim(),
 					privacyStatus: privacy,
 				});
-				if (!setup?.success) {
+				if (!setup || !setup.success) {
 					throw new Error(setup?.error ?? "Could not set up the YouTube stream.");
 				}
 				rtmpServer = setup.ingestionAddress ?? "";
@@ -235,6 +237,7 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 				}
 			}
 
+			setStatus("Starting the stream…");
 			const { scene, sources } = await buildDisplayScene();
 			// Stream-only: no local video file is saved (like OBS).
 			const result = await api?.studioStart?.({
@@ -244,23 +247,23 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 				stream: true,
 				streamSettings: { service, server: rtmpServer, key: rtmpKey },
 			});
-			if (!result?.success) {
+			if (!result || !result.success) {
 				throw new Error(result?.error ?? "Failed to start streaming.");
 			}
 			broadcastIdRef.current = broadcastId;
 			if (broadcastId) {
-				// Flip the YouTube broadcast live (auto-start usually beats us to it).
 				await api?.studioYouTubeTransition?.({ broadcastId, broadcastStatus: "live" });
 			}
-			// Persist server/key for next time (YouTube OAuth keys are per-broadcast).
 			await api?.studioSettingsSet?.(STREAM_SETTINGS_KEY, { service, server });
 			if (!youtubeOAuth && rtmpKey) {
 				await api?.studioSecretSet?.(STREAM_KEY_SECRET, rtmpKey);
 			}
 			setIsLive(true);
 			setLiveSince(Date.now());
+			setStatus("You're live!");
 		} catch (e) {
 			setError(e instanceof Error ? e.message : "Failed to start streaming.");
+			setStatus(null);
 		} finally {
 			setBusy(false);
 		}
@@ -269,6 +272,7 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 	const handleStopStreaming = async () => {
 		setError(null);
 		setBusy(true);
+		setStatus("Ending the stream…");
 		try {
 			const api = getStudioApi();
 			await api?.studioStop?.();
@@ -279,6 +283,7 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 			}
 			setIsLive(false);
 			setLiveSince(null);
+			setStatus("Stream ended.");
 		} catch (e) {
 			setError(e instanceof Error ? e.message : "Failed to stop streaming.");
 		} finally {
@@ -287,51 +292,42 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 	};
 
 	return (
-		<div
-			className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-			onClick={onClose}
-		>
-			<div
-				className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-2xl border border-zinc-700/60 bg-zinc-900 p-6 shadow-2xl"
-				onClick={(e) => e.stopPropagation()}
-				role="dialog"
-				aria-label="Go live"
-			>
-				<div className="mb-5 flex items-center justify-between">
-					<div className="flex items-center gap-2.5">
-						{isLive ? (
-							<span className="flex items-center gap-1.5 rounded-full bg-red-500/15 px-2.5 py-1 text-xs font-bold text-red-400">
-								<span className="size-2 animate-pulse rounded-full bg-red-500" />
-								LIVE {liveSince ? `· ${formatElapsed(now - liveSince)}` : ""}
-							</span>
-						) : (
-							<h2 className="text-lg font-semibold text-zinc-100">Go Live</h2>
-						)}
-					</div>
-					<button
-						type="button"
-						aria-label="Close"
-						className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-						onClick={onClose}
-					>
-						✕
-					</button>
+		<div className="flex h-screen w-screen flex-col bg-zinc-900 text-zinc-100">
+			<div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
+				<div className="flex items-center gap-2.5">
+					{isLive ? (
+						<span className="flex items-center gap-1.5 rounded-full bg-red-500/15 px-3 py-1 text-xs font-bold text-red-400">
+							<span className="size-2 animate-pulse rounded-full bg-red-500" />
+							LIVE {liveSince ? `· ${formatElapsed(now - liveSince)}` : ""}
+						</span>
+					) : (
+						<h1 className="text-base font-semibold">Go Live</h1>
+					)}
 				</div>
+				<p className="text-xs text-zinc-500">Recordly Studio</p>
+			</div>
 
+			<div className="flex-1 overflow-y-auto px-5 py-5">
 				{isLive ? (
-					<div className="flex flex-col items-center gap-4 py-4 text-center">
-						<p className="text-sm text-zinc-400">
-							You are live{service === "youtube" ? " on YouTube" : ""}. Your screen is
-							streaming — no video file is being saved.
-						</p>
+					<div className="flex flex-col items-center gap-4 py-8 text-center">
+						<div className="flex size-16 items-center justify-center rounded-full bg-red-500/15">
+							<span className="size-6 animate-pulse rounded-full bg-red-500" />
+						</div>
+						<div>
+							<p className="font-medium">You're live{service === "youtube" ? " on YouTube" : ""}</p>
+							<p className="mt-1 text-sm text-zinc-400">
+								Your screen is streaming. No video file is being saved.
+							</p>
+						</div>
 						<Button
 							variant="destructive"
 							className="w-full"
 							isDisabled={busy}
 							onPress={handleStopStreaming}
 						>
-							{busy ? "Stopping…" : "End Stream"}
+							{busy ? "Ending…" : "End Stream"}
 						</Button>
+						{status && <p className="text-xs text-zinc-400">{status}</p>}
 						{error && <p className="text-xs text-red-400">{error}</p>}
 					</div>
 				) : (
@@ -378,7 +374,7 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 								) : (
 									<div className="rounded-xl border border-zinc-700/60 bg-zinc-800/40 p-4">
 										<p className="mb-3 text-xs text-zinc-400">
-											Sign in with Google once — Recordly will create your YouTube
+											Sign in with Google once — Recordly creates your YouTube
 											stream automatically when you go live.
 										</p>
 										<Button
@@ -387,14 +383,14 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 											isDisabled={busy}
 											onPress={handleConnectYouTube}
 										>
-											{busy ? "Opening browser…" : "Connect YouTube account"}
+											{busy ? "Waiting for sign-in…" : "Connect YouTube account"}
 										</Button>
 										<button
 											type="button"
 											className="mt-2.5 w-full text-center text-xs text-zinc-500 underline hover:text-zinc-300"
 											onClick={() => setShowClientIdHelp((v) => !v)}
 										>
-											{showClientIdHelp ? "Hide setup guide" : "First time? Get a Client ID"}
+											{showClientIdHelp ? "Hide setup guide" : "First time? One-time setup"}
 										</button>
 										{showClientIdHelp && (
 											<div className="mt-3 border-t border-zinc-700/60 pt-3">
@@ -513,9 +509,24 @@ export function GoLiveDialog({ onClose }: { onClose: () => void }) {
 										className={inputClass}
 									/>
 								</label>
+								{service === "youtube" && (
+									<p className="text-[11px] text-zinc-500">
+										Find it at{" "}
+										<a
+											className="text-blue-400 underline"
+											href="https://www.youtube.com/livestreaming"
+											target="_blank"
+											rel="noreferrer"
+										>
+											youtube.com/livestreaming
+										</a>{" "}
+										→ Stream settings.
+									</p>
+								)}
 							</>
 						)}
 
+						{status && <p className="text-xs text-blue-300">{status}</p>}
 						{error && <p className="text-xs text-red-400">{error}</p>}
 
 						<Button

@@ -104,6 +104,8 @@ export interface StudioStartOpts {
  * UI degrades gracefully if the preload surface is unavailable.
  */
 export interface StudioPreloadApi {
+	studioOpenWindow(): Promise<{ success: boolean }>;
+	studioOpenGoLiveWindow(): Promise<{ success: boolean }>;
 	studioGetDisplays(): Promise<DisplayInfo[]>;
 	studioGetWindows(): Promise<WindowInfo[]>;
 	studioGetAudioDevices(): Promise<AudioDeviceInfo[]>;

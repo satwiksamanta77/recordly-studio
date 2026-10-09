@@ -25,6 +25,11 @@ const StudioWindow = lazy(() =>
 		default: module.StudioWindow,
 	})),
 );
+const GoLiveWindow = lazy(() =>
+	import("./components/launch/GoLiveWindow").then((module) => ({
+		default: module.GoLiveWindow,
+	})),
+);
 
 export default function App() {
 	const [windowType] = useState(
@@ -65,7 +70,9 @@ export default function App() {
 				? t("app.editorTitle", "Recordly Editor")
 				: windowType === "studio"
 					? "Recordly Studio"
-					: t("app.name", "Recordly");
+					: windowType === "golive"
+						? "Go Live — Recordly Studio"
+						: t("app.name", "Recordly");
 	}, [windowType, t]);
 
 	let content;
@@ -87,6 +94,9 @@ export default function App() {
 			break;
 		case "studio":
 			content = <StudioWindow />;
+			break;
+		case "golive":
+			content = <GoLiveWindow />;
 			break;
 		default:
 			content = (

@@ -16,7 +16,12 @@ import {
 } from "./hudOverlayBounds";
 import { getHudOverlayTaskbarOptions } from "./hudOverlayWindowOptions";
 import { getPackagedRendererBaseUrl } from "./rendererServer";
-import { getStudioWindow, setStudioWindow } from "./studio/windowRef";
+import {
+	getGoLiveWindow,
+	getStudioWindow,
+	setGoLiveWindow,
+	setStudioWindow,
+} from "./studio/windowRef";
 
 const electronWindowsDir = path.dirname(fileURLToPath(import.meta.url));
 const nodeRequire = createRequire(import.meta.url);
@@ -1123,6 +1128,74 @@ export function openStudioWindow(): BrowserWindow {
 		return existing;
 	}
 	return createStudioWindow();
+}
+
+/**
+ * Dedicated Go Live window: a proper centered dialog (not rendered inside the
+ * tiny HUD bar). Hosts the YouTube/Twitch stream setup and live controls.
+ */
+export function createGoLiveWindow(): BrowserWindow {
+	const { width, height } = getScreen().getPrimaryDisplay().workAreaSize;
+	const winWidth = 480;
+	const winHeight = 720;
+
+	const win = new BrowserWindow({
+		width: winWidth,
+		height: winHeight,
+		minWidth: 440,
+		minHeight: 600,
+		x: Math.round((width - winWidth) / 2),
+		y: Math.round((height - winHeight) / 2),
+		title: "Go Live",
+		show: false,
+		backgroundColor: "#18181b",
+		autoHideMenuBar: true,
+		resizable: true,
+		...(process.platform !== "darwin" && {
+			icon: WINDOW_ICON_PATH,
+		}),
+		webPreferences: {
+			preload: path.join(electronWindowsDir, "preload.mjs"),
+			nodeIntegration: false,
+			contextIsolation: true,
+			backgroundThrottling: false,
+		},
+	});
+
+	setGoLiveWindow(win);
+
+	win.once("ready-to-show", () => {
+		if (!win.isDestroyed()) {
+			win.show();
+		}
+	});
+
+	win.on("closed", () => {
+		setGoLiveWindow(null);
+	});
+
+	if (VITE_DEV_SERVER_URL) {
+		win.loadURL(VITE_DEV_SERVER_URL + "?windowType=golive");
+	} else {
+		win.loadFile(path.join(RENDERER_DIST, "index.html"), {
+			query: { windowType: "golive" },
+		});
+	}
+
+	return win;
+}
+
+/**
+ * Open the Go Live window, focusing the existing one if it is already open.
+ */
+export function openGoLiveWindow(): BrowserWindow {
+	const existing = getGoLiveWindow();
+	if (existing && !existing.isDestroyed()) {
+		if (existing.isMinimized()) existing.restore();
+		existing.focus();
+		return existing;
+	}
+	return createGoLiveWindow();
 }
 
 export function createSourceSelectorWindow(): BrowserWindow {

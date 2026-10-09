@@ -1,9 +1,7 @@
 import { createServer, type Server } from "node:http";
-import { createRequire } from "node:module";
 import { readAppSetting, writeAppSetting } from "../appSettingsStore";
 import { deleteSecureSetting, readSecureSetting, writeSecureSetting } from "../secureSettingsStore";
-
-const nodeRequire = createRequire(import.meta.url);
+import { shell } from "electron";
 
 export const YOUTUBE_OAUTH_SCOPE = "https://www.googleapis.com/auth/youtube";
 
@@ -18,6 +16,9 @@ export const YOUTUBE_CHANNEL_TITLE_KEY = "studio.youtube.channelTitle";
 
 const OAUTH_CALLBACK_PATH = "/callback";
 const OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
+// Preferred fixed port for the OAuth callback (predictable redirect URI).
+// Falls back to a random port if it's taken.
+const OAUTH_CALLBACK_PORT = 38472;
 
 const CALLBACK_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>Recordly Studio</title><style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#101014;color:#f2f2f3}main{text-align:center}</style></head><body><main><h1>Signed in</h1><p>You can close this tab and return to Recordly Studio.</p></main></body></html>`;
 
@@ -223,8 +224,7 @@ export async function fetchLiveIngestion(opts: {
 }
 
 function openInBrowser(url: string): Promise<void> {
-	const electron = nodeRequire("electron") as typeof import("electron");
-	return electron.shell.openExternal(url);
+	return shell.openExternal(url);
 }
 
 /**
@@ -301,11 +301,25 @@ function waitForOAuthCode(clientId: string): Promise<{ code: string; redirectUri
 			resolve({ code, redirectUri: `http://127.0.0.1:${port}${OAUTH_CALLBACK_PATH}` });
 		});
 
-		server.on("error", (error: Error) => {
+		// Try the fixed port first (predictable redirect URI), fall back to random
+		// port if it's taken. Any other server error is fatal.
+		let fallbackAttempted = false;
+		server.on("error", (error: NodeJS.ErrnoException) => {
+			if (!fallbackAttempted && error.code === "EADDRINUSE") {
+				fallbackAttempted = true;
+				server.listen(0, "127.0.0.1", () => {
+					onServerListening();
+				});
+				return;
+			}
 			fail(new Error(`Could not start the local sign-in callback server: ${error.message}`));
 		});
 
-		server.listen(0, "127.0.0.1", () => {
+		server.listen(OAUTH_CALLBACK_PORT, "127.0.0.1", () => {
+			onServerListening();
+		});
+
+		function onServerListening(): void {
 			const address = server.address();
 			if (!address || typeof address === "string") {
 				fail(new Error("Could not start the local sign-in callback server."));
@@ -330,7 +344,7 @@ function waitForOAuthCode(clientId: string): Promise<{ code: string; redirectUri
 					),
 				);
 			});
-		});
+		}
 	});
 }
 
