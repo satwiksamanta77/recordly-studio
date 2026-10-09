@@ -218,12 +218,182 @@ describe("fetchLiveIngestion", () => {
 });
 
 describe("connectYouTubeAccount", () => {
-	it("rejects before any network activity when credentials are missing", async () => {
-		await expect(
-			connectYouTubeAccount({ clientId: "  ", clientSecret: "secret" }),
-		).rejects.toThrow(/client ID and client secret/i);
-		await expect(connectYouTubeAccount({ clientId: "cid", clientSecret: "" })).rejects.toThrow(
-			/client ID and client secret/i,
+	it("rejects before any network activity when the client ID is missing", async () => {
+		await expect(connectYouTubeAccount({ clientId: "  " })).rejects.toThrow(/client ID/i);
+	});
+});
+
+describe("exchangeCodeForTokens without client secret", () => {
+	it("omits client_secret from the body for public desktop clients", async () => {
+		let seenInit: RequestInit | undefined;
+		const fetchFn = makeFetch((_url, init) => {
+			seenInit = init;
+			return okJson({ access_token: "fake-at", refresh_token: "rt", expires_in: 3600 });
+		});
+
+		await exchangeCodeForTokens({
+			code: "auth-code",
+			clientId: "cid",
+			redirectUri: "http://127.0.0.1:1111/callback",
+			fetchFn,
+		});
+
+		const body = formBody(seenInit);
+		expect(body.get("client_id")).toBe("cid");
+		expect(body.has("client_secret")).toBe(false);
+	});
+});
+
+describe("refreshAccessToken without client secret", () => {
+	it("omits client_secret from the body for public desktop clients", async () => {
+		let seenInit: RequestInit | undefined;
+		const fetchFn = makeFetch((_url, init) => {
+			seenInit = init;
+			return okJson({ access_token: "fake-at", expires_in: 3600 });
+		});
+
+		await refreshAccessToken({ refreshToken: "rt", clientId: "cid", fetchFn });
+
+		const body = formBody(seenInit);
+		expect(body.get("grant_type")).toBe("refresh_token");
+		expect(body.has("client_secret")).toBe(false);
+	});
+});
+
+vi.mock("../secureSettingsStore", () => ({
+	readSecureSetting: vi.fn((key: string) => {
+		if (key === "studio.youtube.refreshToken") return "test-refresh-token";
+		if (key === "studio.youtube.clientId") return "test-client-id";
+		return null;
+	}),
+	writeSecureSetting: vi.fn(),
+	deleteSecureSetting: vi.fn(),
+}));
+
+// Re-import after the mock so setupYouTubeLive sees the mocked settings.
+import {
+	setupYouTubeLive,
+	transitionYouTubeBroadcast,
+} from "./youtube";
+
+describe("setupYouTubeLive", () => {
+	it("creates a broadcast, a stream, binds them, and returns ingestion details", async () => {
+		const calls: { url: string; init?: RequestInit }[] = [];
+		const fetchFn = makeFetch((url, init) => {
+			calls.push({ url, init });
+			if (url.includes("oauth2.googleapis.com/token")) {
+				return okJson({ access_token: "fake-at", expires_in: 3600 });
+			}
+			if (url.includes("/liveBroadcasts/bind")) {
+				return okJson({});
+			}
+			if (url.includes("/liveBroadcasts?")) {
+				return okJson({ id: "broadcast-123" });
+			}
+			if (url.includes("/liveStreams?")) {
+				return okJson({
+					id: "stream-456",
+					cdn: {
+						ingestionInfo: {
+							ingestionAddress: "rtmp://a.rtmp.youtube.com/live2",
+							streamName: "key-abc",
+						},
+					},
+				});
+			}
+			throw new Error(`unexpected url ${url}`);
+		});
+
+		const result = await setupYouTubeLive({
+			title: "My Stream",
+			description: "desc",
+			privacyStatus: "unlisted",
+			fetchFn,
+		});
+
+		expect(result).toEqual({
+			broadcastId: "broadcast-123",
+			ingestionAddress: "rtmp://a.rtmp.youtube.com/live2",
+			streamName: "key-abc",
+		});
+
+		// Broadcast insert carries title + privacy.
+		const broadcastCall = calls.find((c) => c.url.includes("/liveBroadcasts?"));
+		const broadcastBody = JSON.parse(String(broadcastCall?.init?.body ?? "{}"));
+		expect(broadcastBody.snippet.title).toBe("My Stream");
+		expect(broadcastBody.status.privacyStatus).toBe("unlisted");
+		expect(broadcastBody.contentDetails.enableAutoStart).toBe(true);
+
+		// Bind call references both IDs.
+		const bindCall = calls.find((c) => c.url.includes("/liveBroadcasts/bind"));
+		expect(bindCall?.url).toContain("broadcast-123");
+		expect(bindCall?.url).toContain("stream-456");
+	});
+
+	it("defaults an empty title to 'Live Stream'", async () => {
+		let broadcastBody: Record<string, unknown> = {};
+		const fetchFn = makeFetch((url, init) => {
+			if (url.includes("oauth2.googleapis.com/token")) {
+				return okJson({ access_token: "fake-at", expires_in: 3600 });
+			}
+			if (url.includes("/liveBroadcasts/bind")) return okJson({});
+			if (url.includes("/liveBroadcasts?")) {
+				broadcastBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+				return okJson({ id: "b1" });
+			}
+			if (url.includes("/liveStreams?")) {
+				return okJson({
+					id: "s1",
+					cdn: { ingestionInfo: { ingestionAddress: "rtmp://x", streamName: "k" } },
+				});
+			}
+			throw new Error(`unexpected url ${url}`);
+		});
+
+		await setupYouTubeLive({ title: "   ", privacyStatus: "private", fetchFn });
+		expect((broadcastBody["snippet"] as { title?: string }).title).toBe("Live Stream");
+		expect((broadcastBody["status"] as { privacyStatus?: string }).privacyStatus).toBe(
+			"private",
 		);
+	});
+});
+
+describe("transitionYouTubeBroadcast", () => {
+	it("POSTs to the transition endpoint", async () => {
+		let seenUrl = "";
+		const fetchFn = makeFetch((url) => {
+			seenUrl = url;
+			if (url.includes("oauth2.googleapis.com/token")) {
+				return okJson({ access_token: "fake-at", expires_in: 3600 });
+			}
+			return okJson({});
+		});
+
+		await transitionYouTubeBroadcast({
+			broadcastId: "broadcast-123",
+			broadcastStatus: "live",
+			fetchFn,
+		});
+
+		expect(seenUrl).toContain("/liveBroadcasts/transition");
+		expect(seenUrl).toContain("broadcastStatus=live");
+		expect(seenUrl).toContain("broadcast-123");
+	});
+
+	it("does not throw when YouTube rejects the transition (best-effort)", async () => {
+		const fetchFn = makeFetch((url) => {
+			if (url.includes("oauth2.googleapis.com/token")) {
+				return okJson({ access_token: "fake-at", expires_in: 3600 });
+			}
+			return errorJson(400, { message: "already live" });
+		});
+
+		await expect(
+			transitionYouTubeBroadcast({
+				broadcastId: "b1",
+				broadcastStatus: "complete",
+				fetchFn,
+			}),
+		).resolves.toBeUndefined();
 	});
 });

@@ -116,15 +116,28 @@ export interface StudioPreloadApi {
 	studioSecretGet(key: string): Promise<string | null>;
 	studioSecretSet(key: string, value: string): Promise<unknown>;
 	studioSecretDelete(key: string): Promise<unknown>;
-	studioYouTubeConnect(opts: { clientId: string; clientSecret: string }): Promise<{
+	studioYouTubeConnect(opts: { clientId: string; clientSecret?: string }): Promise<{
 		success: boolean;
 		channelTitle?: string;
-		ingestionAddress?: string;
-		streamName?: string;
 		error?: string;
 	}>;
 	studioYouTubeDisconnect(): Promise<unknown>;
 	studioYouTubeStatus(): Promise<{ connected: boolean; channelTitle?: string }>;
+	studioYouTubeSetupLive(opts: {
+		title: string;
+		description?: string;
+		privacyStatus: "public" | "unlisted" | "private";
+	}): Promise<{
+		success: boolean;
+		broadcastId?: string;
+		ingestionAddress?: string;
+		streamName?: string;
+		error?: string;
+	}>;
+	studioYouTubeTransition(opts: {
+		broadcastId: string;
+		broadcastStatus: "live" | "complete";
+	}): Promise<{ success: boolean; error?: string }>;
 }
 
 /**

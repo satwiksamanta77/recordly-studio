@@ -1187,7 +1187,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	studioSecretDelete: (key: string) => {
 		return ipcRenderer.invoke("studio-secret-delete", key);
 	},
-	studioYouTubeConnect: (options: { clientId: string; clientSecret: string }) => {
+	studioYouTubeConnect: (options: { clientId: string; clientSecret?: string }) => {
 		return ipcRenderer.invoke("studio-youtube-connect", options);
 	},
 	studioYouTubeDisconnect: () => {
@@ -1195,6 +1195,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	},
 	studioYouTubeStatus: () => {
 		return ipcRenderer.invoke("studio-youtube-status");
+	},
+	studioYouTubeSetupLive: (options: {
+		title: string;
+		description?: string;
+		privacyStatus: "public" | "unlisted" | "private";
+	}) => {
+		return ipcRenderer.invoke("studio-youtube-setup-live", options);
+	},
+	studioYouTubeTransition: (options: {
+		broadcastId: string;
+		broadcastStatus: "live" | "complete";
+	}) => {
+		return ipcRenderer.invoke("studio-youtube-transition", options);
 	},
 	studioOpenWindow: () => {
 		return ipcRenderer.invoke("studio-open-window");

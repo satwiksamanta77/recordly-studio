@@ -6,7 +6,7 @@
 !include "LogicLib.nsh"
 
 !define APP_NAME "Recordly Studio"
-!define APP_VERSION "1.0.1"
+!define APP_VERSION "1.0.2"
 !define APP_EXE "RecordlyStudio.exe"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\RecordlyStudio"
 

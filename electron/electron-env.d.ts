@@ -286,6 +286,12 @@ interface StudioAudioDeviceInfo {
 interface StudioYouTubeConnectResult {
 	success: boolean;
 	channelTitle?: string;
+	error?: string;
+}
+
+interface StudioYouTubeSetupLiveResult {
+	success: boolean;
+	broadcastId?: string;
 	ingestionAddress?: string;
 	streamName?: string;
 	error?: string;
@@ -1152,10 +1158,19 @@ interface Window {
 		studioSecretDelete: (key: string) => Promise<{ success: boolean; error?: string }>;
 		studioYouTubeConnect: (options: {
 			clientId: string;
-			clientSecret: string;
+			clientSecret?: string;
 		}) => Promise<StudioYouTubeConnectResult>;
 		studioYouTubeDisconnect: () => Promise<{ success: boolean; error?: string }>;
 		studioYouTubeStatus: () => Promise<StudioYouTubeStatus>;
+		studioYouTubeSetupLive: (options: {
+			title: string;
+			description?: string;
+			privacyStatus: "public" | "unlisted" | "private";
+		}) => Promise<StudioYouTubeSetupLiveResult>;
+		studioYouTubeTransition: (options: {
+			broadcastId: string;
+			broadcastStatus: "live" | "complete";
+		}) => Promise<{ success: boolean; error?: string }>;
 		studioOpenWindow: () => Promise<{ success: boolean }>;
 	};
 }

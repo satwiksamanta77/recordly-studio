@@ -104,39 +104,41 @@ async function requestTokens(
 export async function exchangeCodeForTokens(opts: {
 	code: string;
 	clientId: string;
-	clientSecret: string;
+	clientSecret?: string;
 	redirectUri: string;
 	fetchFn?: FetchFn;
 }): Promise<TokenResponse> {
 	const fetchFn = opts.fetchFn ?? fetch;
-	return requestTokens(
-		{
-			code: opts.code,
-			client_id: opts.clientId,
-			client_secret: opts.clientSecret,
-			redirect_uri: opts.redirectUri,
-			grant_type: "authorization_code",
-		},
-		fetchFn,
-	);
+	const body: Record<string, string> = {
+		code: opts.code,
+		client_id: opts.clientId,
+		redirect_uri: opts.redirectUri,
+		grant_type: "authorization_code",
+	};
+	// Desktop-app OAuth clients are public clients: Google accepts the token
+	// exchange without a client secret.
+	if (opts.clientSecret && opts.clientSecret.length > 0) {
+		body["client_secret"] = opts.clientSecret;
+	}
+	return requestTokens(body, fetchFn);
 }
 
 export async function refreshAccessToken(opts: {
 	refreshToken: string;
 	clientId: string;
-	clientSecret: string;
+	clientSecret?: string;
 	fetchFn?: FetchFn;
 }): Promise<TokenResponse> {
 	const fetchFn = opts.fetchFn ?? fetch;
-	return requestTokens(
-		{
-			refresh_token: opts.refreshToken,
-			client_id: opts.clientId,
-			client_secret: opts.clientSecret,
-			grant_type: "refresh_token",
-		},
-		fetchFn,
-	);
+	const body: Record<string, string> = {
+		refresh_token: opts.refreshToken,
+		client_id: opts.clientId,
+		grant_type: "refresh_token",
+	};
+	if (opts.clientSecret && opts.clientSecret.length > 0) {
+		body["client_secret"] = opts.clientSecret;
+	}
+	return requestTokens(body, fetchFn);
 }
 
 export interface LiveIngestion {
@@ -334,20 +336,16 @@ function waitForOAuthCode(clientId: string): Promise<{ code: string; redirectUri
 
 export interface YouTubeConnectResult {
 	channelTitle: string;
-	ingestionAddress: string;
-	streamName: string;
 }
 
 export async function connectYouTubeAccount(opts: {
 	clientId: string;
-	clientSecret: string;
+	clientSecret?: string;
 }): Promise<YouTubeConnectResult> {
 	const clientId = opts.clientId.trim();
-	const clientSecret = opts.clientSecret.trim();
-	if (clientId.length === 0 || clientSecret.length === 0) {
-		throw new Error(
-			"Enter your Google OAuth client ID and client secret in Settings → Stream first.",
-		);
+	const clientSecret = (opts.clientSecret ?? "").trim();
+	if (clientId.length === 0) {
+		throw new Error("Enter your Google OAuth client ID in the YouTube section first.");
 	}
 	const { code, redirectUri } = await waitForOAuthCode(clientId);
 	const tokens = await exchangeCodeForTokens({ code, clientId, clientSecret, redirectUri });
@@ -358,14 +356,193 @@ export async function connectYouTubeAccount(opts: {
 	}
 	writeSecureSetting(YOUTUBE_REFRESH_TOKEN_KEY, tokens.refreshToken);
 	writeSecureSetting(YOUTUBE_CLIENT_ID_KEY, clientId);
-	writeSecureSetting(YOUTUBE_CLIENT_SECRET_KEY, clientSecret);
-	const ingestion = await fetchLiveIngestion({ accessToken: tokens.accessToken });
-	writeAppSetting(YOUTUBE_CHANNEL_TITLE_KEY, ingestion.channelTitle);
-	return {
-		channelTitle: ingestion.channelTitle,
-		ingestionAddress: ingestion.ingestionAddress,
-		streamName: ingestion.streamName,
-	};
+	if (clientSecret.length > 0) {
+		writeSecureSetting(YOUTUBE_CLIENT_SECRET_KEY, clientSecret);
+	} else {
+		deleteSecureSetting(YOUTUBE_CLIENT_SECRET_KEY);
+	}
+	// Channel title only — the live broadcast/stream is created on demand when
+	// the user goes live, so no pre-existing YouTube Studio stream is required.
+	const channelsPayload = await getYouTubeJson(
+		`${YOUTUBE_API_BASE}/channels?mine=true&part=snippet`,
+		tokens.accessToken,
+		fetch,
+	);
+	const channelItem = itemsOf(channelsPayload)[0] as ChannelItem | undefined;
+	const channelTitle =
+		typeof channelItem?.snippet?.title === "string" ? channelItem.snippet.title : "";
+	writeAppSetting(YOUTUBE_CHANNEL_TITLE_KEY, channelTitle);
+	return { channelTitle };
+}
+
+/** Resolve a fresh access token from the stored refresh token + client ID. */
+async function getAccessToken(fetchFn: FetchFn = fetch): Promise<string> {
+	const refreshToken = readSecureSetting(YOUTUBE_REFRESH_TOKEN_KEY);
+	const clientId = readSecureSetting(YOUTUBE_CLIENT_ID_KEY);
+	if (!refreshToken || !clientId) {
+		throw new Error("YouTube account is not connected. Connect it first.");
+	}
+	const clientSecret = readSecureSetting(YOUTUBE_CLIENT_SECRET_KEY) ?? undefined;
+	const tokens = await refreshAccessToken({
+		refreshToken,
+		clientId,
+		clientSecret,
+		fetchFn,
+	});
+	return tokens.accessToken;
+}
+
+async function youtubeApiRequest(
+	method: "GET" | "POST",
+	url: string,
+	accessToken: string,
+	body: unknown,
+	fetchFn: FetchFn,
+): Promise<Record<string, unknown>> {
+	let response: Response;
+	try {
+		response = await fetchFn(url, {
+			method,
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				"Content-Type": "application/json",
+			},
+			body: body === undefined ? undefined : JSON.stringify(body),
+		});
+	} catch (error) {
+		throw new Error(
+			`Could not reach the YouTube API: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	const payload = await readJsonBody(response);
+	if (!response.ok) {
+		const message = payload["message"];
+		const errors = payload["error"];
+		const detail =
+			typeof message === "string" && message.length > 0
+				? message
+				: typeof errors === "string" && errors.length > 0
+					? errors
+					: `HTTP ${response.status}`;
+		throw new Error(`YouTube API error: ${detail}`);
+	}
+	return payload;
+}
+
+export type YouTubePrivacyStatus = "public" | "unlisted" | "private";
+
+export interface YouTubeLiveSetup {
+	broadcastId: string;
+	ingestionAddress: string;
+	streamName: string;
+}
+
+/**
+ * Full "Go Live" setup: creates a live broadcast (title + privacy), creates a
+ * dedicated RTMP stream, and binds them. Returns the RTMP ingestion details.
+ * Nothing needs to be pre-created in YouTube Studio.
+ */
+export async function setupYouTubeLive(opts: {
+	title: string;
+	description?: string;
+	privacyStatus: YouTubePrivacyStatus;
+	fetchFn?: FetchFn;
+}): Promise<YouTubeLiveSetup> {
+	const fetchFn = opts.fetchFn ?? fetch;
+	const title = opts.title.trim() || "Live Stream";
+	const accessToken = await getAccessToken(fetchFn);
+
+	const broadcastPayload = await youtubeApiRequest(
+		"POST",
+		`${YOUTUBE_API_BASE}/liveBroadcasts?part=snippet,contentDetails,status`,
+		accessToken,
+		{
+			snippet: {
+				title,
+				description: opts.description?.trim() ?? "",
+				scheduledStartTime: new Date().toISOString(),
+			},
+			contentDetails: {
+				enableAutoStart: true,
+				enableAutoStop: true,
+			},
+			status: {
+				privacyStatus: opts.privacyStatus,
+				selfDeclaredMadeForKids: false,
+			},
+		},
+		fetchFn,
+	);
+	const broadcastId = broadcastPayload["id"];
+	if (typeof broadcastId !== "string" || broadcastId.length === 0) {
+		throw new Error("YouTube did not return a broadcast ID.");
+	}
+
+	const streamPayload = await youtubeApiRequest(
+		"POST",
+		`${YOUTUBE_API_BASE}/liveStreams?part=snippet,cdn`,
+		accessToken,
+		{
+			snippet: { title },
+			cdn: {
+				frameRate: "60fps",
+				ingestionType: "rtmp",
+				resolution: "1080p",
+			},
+		},
+		fetchFn,
+	);
+	const streamId = streamPayload["id"];
+	const cdn = streamPayload["cdn"] as
+		| { ingestionInfo?: { ingestionAddress?: unknown; streamName?: unknown } }
+		| undefined;
+	const ingestionAddress = cdn?.ingestionInfo?.ingestionAddress;
+	const streamName = cdn?.ingestionInfo?.streamName;
+	if (
+		typeof streamId !== "string" ||
+		typeof ingestionAddress !== "string" ||
+		typeof streamName !== "string"
+	) {
+		throw new Error("YouTube did not return stream ingestion details.");
+	}
+
+	await youtubeApiRequest(
+		"POST",
+		`${YOUTUBE_API_BASE}/liveBroadcasts/bind?id=${encodeURIComponent(broadcastId)}&streamId=${encodeURIComponent(streamId)}&part=contentDetails`,
+		accessToken,
+		{},
+		fetchFn,
+	);
+
+	return { broadcastId, ingestionAddress, streamName };
+}
+
+/**
+ * Transition a broadcast to live/complete. Best-effort: with enableAutoStart
+ * YouTube flips to live on first RTMP data, so "already live" is not an error.
+ */
+export async function transitionYouTubeBroadcast(opts: {
+	broadcastId: string;
+	broadcastStatus: "live" | "complete";
+	fetchFn?: FetchFn;
+}): Promise<void> {
+	const fetchFn = opts.fetchFn ?? fetch;
+	const accessToken = await getAccessToken(fetchFn);
+	try {
+		await youtubeApiRequest(
+			"POST",
+			`${YOUTUBE_API_BASE}/liveBroadcasts/transition?broadcastStatus=${opts.broadcastStatus}&id=${encodeURIComponent(opts.broadcastId)}&part=status`,
+			accessToken,
+			{},
+			fetchFn,
+		);
+	} catch (error) {
+		// Auto-start/auto-stop usually handles this; don't fail the session over it.
+		console.warn(
+			`[studio] YouTube transition to ${opts.broadcastStatus} failed (non-fatal):`,
+			error instanceof Error ? error.message : String(error),
+		);
+	}
 }
 
 export async function disconnectYouTubeAccount(): Promise<void> {

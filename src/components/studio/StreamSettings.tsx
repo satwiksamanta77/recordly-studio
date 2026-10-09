@@ -77,34 +77,27 @@ export function StreamSettings({ onClose }: { onClose: () => void }) {
 	const handleConnectYouTube = async () => {
 		setError(null);
 		setNotice(null);
-		if (!clientId.trim() || !clientSecret.trim()) {
-			setError("Enter your Google OAuth Client ID and Client Secret first.");
+		if (!clientId.trim()) {
+			setError("Enter your Google OAuth Client ID first.");
 			return;
 		}
 		setBusy(true);
 		try {
 			const result = await getStudioApi()?.studioYouTubeConnect?.({
 				clientId: clientId.trim(),
-				clientSecret: clientSecret.trim(),
+				clientSecret: clientSecret.trim() || undefined,
 			});
-			if (!result?.success) {
+			if (!result || !result.success) {
 				setError(result?.error ?? "YouTube connection failed.");
 				return;
 			}
 			setYtConnected(true);
 			setYtChannel(result.channelTitle ?? "");
-			// Persist credentials so reconnect works without re-pasting.
+			// Persist the client ID so reconnect works without re-pasting.
 			const api = getStudioApi();
 			await api?.studioSecretSet?.(YT_CLIENT_ID_SECRET, clientId.trim());
-			await api?.studioSecretSet?.(YT_CLIENT_SECRET_SECRET, clientSecret.trim());
-			// Auto-fill server + key from the channel's ingestion info.
-			if (result.ingestionAddress) {
-				setService("youtube");
-				setServer(result.ingestionAddress);
-			}
-			if (result.streamName) {
-				setKey(result.streamName);
-				await api?.studioSecretSet?.(STREAM_KEY_SECRET, result.streamName);
+			if (clientSecret.trim()) {
+				await api?.studioSecretSet?.(YT_CLIENT_SECRET_SECRET, clientSecret.trim());
 			}
 			setNotice(
 				result.channelTitle
@@ -243,7 +236,7 @@ export function StreamSettings({ onClose }: { onClose: () => void }) {
 									Go to APIs &amp; Services → Credentials → Create Credentials →
 									OAuth client ID → application type “Desktop app”.
 								</li>
-								<li>Copy the Client ID and Client Secret into the fields below.</li>
+								<li>Copy the Client ID into the field below (no secret needed).</li>
 								<li>
 									Press “Connect YouTube account”, sign in with Google, and
 									approve access.
@@ -261,7 +254,9 @@ export function StreamSettings({ onClose }: { onClose: () => void }) {
 							/>
 						</label>
 						<label className="mb-3 block">
-							<span className="mb-1 block text-xs text-zinc-400">Client Secret</span>
+							<span className="mb-1 block text-xs text-zinc-400">
+								Client Secret <span className="text-zinc-500">(optional)</span>
+							</span>
 							<input
 								type="password"
 								value={clientSecret}

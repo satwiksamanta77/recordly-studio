@@ -13,7 +13,7 @@ import {
 	XIcon,
 } from "@/components/ui/icons";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Separator } from "@/components/ui/separator";
 import { useScopedT } from "../../contexts/I18nContext";
 import { useMicrophoneDevices } from "../../hooks/useMicrophoneDevices";
@@ -42,6 +42,7 @@ import { MicPopover } from "./popovers/MicPopover";
 import { SourcePopover } from "./popovers/SourcePopover";
 import { WebcamPopover } from "./popovers/WebcamPopover";
 import { RecordingControls } from "./RecordingControls";
+import { GoLiveDialog } from "./GoLiveDialog";
 
 export function LaunchWindow() {
 	return (
@@ -80,6 +81,8 @@ function LaunchWindowContent() {
 	} = useScreenRecorder();
 
 	const { elapsed, formatTime } = useRecordingTimer(recording, paused);
+	const [goLiveOpen, setGoLiveOpen] = useState(false);
+	const [studioStreaming, setStudioStreaming] = useState(false);
 	const hudContentRef = useRef<HTMLDivElement>(null);
 	const hudBarRef = useRef<HTMLDivElement>(null);
 
@@ -99,6 +102,29 @@ function LaunchWindowContent() {
 
 	const { hudOverlayMousePassthroughSupported, platform } =
 		useLaunchWindowSystemState(preparePermissions);
+
+	useEffect(() => {
+		let cancelled = false;
+		// Track whether a studio stream is running so the bar can show LIVE state.
+		(async () => {
+			try {
+				const state = await window.electronAPI?.studioGetState?.();
+				if (!cancelled && state && state.state === "running" && state.mode === "stream") {
+					setStudioStreaming(true);
+				}
+			} catch {
+				// Studio state is best-effort here.
+			}
+		})();
+		const unsubscribe = window.electronAPI?.studioOnStateChanged?.((next) => {
+			if (cancelled) return;
+			setStudioStreaming(next.state === "running" && next.mode === "stream");
+		});
+		return () => {
+			cancelled = true;
+			unsubscribe?.();
+		};
+	}, []);
 
 	useEffect(() => {
 		if (!selectedDeviceId) {
@@ -365,6 +391,26 @@ function LaunchWindowContent() {
 
 			<Button
 				type="button"
+				variant="ghost"
+				size="lg"
+				className={`${styles.electronNoDrag} gap-2 px-3 shrink-0 ${
+					studioStreaming ? "text-red-500" : ""
+				}`}
+				onClick={() => setGoLiveOpen(true)}
+				title={studioStreaming ? "Live streaming — click to manage" : "Go live (stream)"}
+			>
+				<span
+					className={`size-2.5 rounded-full ${studioStreaming ? "animate-pulse bg-red-500" : "bg-zinc-400"}`}
+				/>
+				<span className="text-sm font-semibold">
+					{studioStreaming ? "LIVE" : "Go Live"}
+				</span>
+			</Button>
+
+			<Separator orientation="vertical" className="mx-[5px] h-6 self-center" />
+
+			<Button
+				type="button"
 				variant="destructive"
 				size="icon"
 				className={styles.electronNoDrag}
@@ -546,6 +592,7 @@ function LaunchWindowContent() {
 					</div>
 				</div>
 			</div>
+			{goLiveOpen && <GoLiveDialog onClose={() => setGoLiveOpen(false)} />}
 		</HudInteractionContext.Provider>
 	);
 }

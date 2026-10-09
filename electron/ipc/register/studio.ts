@@ -29,6 +29,8 @@ import {
 	connectYouTubeAccount,
 	disconnectYouTubeAccount,
 	getYouTubeStatus,
+	setupYouTubeLive,
+	transitionYouTubeBroadcast,
 } from "../../studio/youtube";
 import { getFfmpegBinaryPath } from "../ffmpeg/binary";
 
@@ -445,9 +447,50 @@ export function registerStudioHandlers() {
 				return {
 					success: true,
 					channelTitle: result.channelTitle,
-					ingestionAddress: result.ingestionAddress,
-					streamName: result.streamName,
 				};
+			} catch (error) {
+				return { success: false, error: toErrorMessage(error) };
+			}
+		},
+	);
+
+	ipcMain.handle(
+		"studio-youtube-setup-live",
+		async (
+			_event,
+			options: { title?: string; description?: string; privacyStatus?: string },
+		) => {
+			try {
+				const privacyStatus =
+					options?.privacyStatus === "public" ||
+					options?.privacyStatus === "private" ||
+					options?.privacyStatus === "unlisted"
+						? options.privacyStatus
+						: "unlisted";
+				const setup = await setupYouTubeLive({
+					title: options?.title ?? "",
+					description: options?.description ?? "",
+					privacyStatus,
+				});
+				return { success: true, ...setup };
+			} catch (error) {
+				return { success: false, error: toErrorMessage(error) };
+			}
+		},
+	);
+
+	ipcMain.handle(
+		"studio-youtube-transition",
+		async (_event, options: { broadcastId?: string; broadcastStatus?: string }) => {
+			try {
+				const broadcastId = options?.broadcastId?.trim() ?? "";
+				if (!broadcastId) {
+					throw new Error("Missing YouTube broadcast ID.");
+				}
+				const broadcastStatus =
+					options?.broadcastStatus === "complete" ? "complete" : "live";
+				await transitionYouTubeBroadcast({ broadcastId, broadcastStatus });
+				return { success: true };
 			} catch (error) {
 				return { success: false, error: toErrorMessage(error) };
 			}
