@@ -516,11 +516,11 @@ export async function setupYouTubeLive(opts: {
 	const cdn = streamPayload["cdn"] as
 		| { ingestionInfo?: { ingestionAddress?: unknown; streamName?: unknown } }
 		| undefined;
-	const ingestionAddress = cdn?.ingestionInfo?.ingestionAddress;
+	const rawIngestionAddress = cdn?.ingestionInfo?.ingestionAddress;
 	const streamName = cdn?.ingestionInfo?.streamName;
 	if (
 		typeof streamId !== "string" ||
-		typeof ingestionAddress !== "string" ||
+		typeof rawIngestionAddress !== "string" ||
 		typeof streamName !== "string"
 	) {
 		throw new Error("YouTube did not return stream ingestion details.");
@@ -534,6 +534,14 @@ export async function setupYouTubeLive(opts: {
 		fetchFn,
 	);
 	studioLog("youtube", `broadcast ${broadcastId} bound to stream ${streamId}`);
+
+	// Prefer RTMPS (port 443) over RTMP (port 1935): port 1935 is blocked on
+	// many networks, while 443 (HTTPS) is effectively always open.
+	const ingestionAddress = rawIngestionAddress.replace(/^rtmp:\/\//i, "rtmps://");
+	studioLog(
+		"youtube",
+		`ingestion via ${ingestionAddress.replace(/\/[^/]+\/?$/, "/<stream-key>")}`,
+	);
 
 	return { broadcastId, ingestionAddress, streamName };
 }

@@ -47,6 +47,7 @@ export function createStudioSupervisor(
 	let stopPromise: Promise<void> | null = null;
 	let lastState: StudioRunState = "idle";
 	let stderrTail: string[] = [];
+	let lastStatsLogAt = 0;
 
 	const emitState = (state: StudioRunState, detail?: string) => {
 		lastState = state;
@@ -62,7 +63,16 @@ export function createStudioSupervisor(
 		}
 		const match = STATS_PATTERN.exec(line);
 		if (match) {
-			events.onStats?.({ frame: Number(match[1]), fps: Number(match[2]) });
+			const frame = Number(match[1]);
+			const fps = Number(match[2]);
+			events.onStats?.({ frame, fps });
+			// Throttled encoding heartbeat: proves frames are actually being
+			// produced (vs. a hung RTMP connection).
+			const now = Date.now();
+			if (now - lastStatsLogAt > 15000) {
+				lastStatsLogAt = now;
+				studioLog("ffmpeg", `encoding frame=${frame} fps=${fps}`);
+			}
 		}
 	};
 
