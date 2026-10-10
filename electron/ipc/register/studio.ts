@@ -561,4 +561,22 @@ export function registerStudioHandlers() {
 			}
 		},
 	);
+
+	ipcMain.handle(
+		"studio-youtube-go-live",
+		async (_event, options: { broadcastId?: string; streamId?: string }) => {
+			try {
+				const broadcastId = options?.broadcastId?.trim() ?? "";
+				const streamId = options?.streamId?.trim() ?? "";
+				if (!broadcastId || !streamId) {
+					throw new Error("Missing YouTube broadcast/stream ID.");
+				}
+				const { goLiveWhenStreamActive } = await import("../../studio/youtube");
+				const lifeCycleStatus = await goLiveWhenStreamActive({ broadcastId, streamId });
+				return { success: true, lifeCycleStatus };
+			} catch (error) {
+				return { success: false, error: toErrorMessage(error) };
+			}
+		},
+	);
 }

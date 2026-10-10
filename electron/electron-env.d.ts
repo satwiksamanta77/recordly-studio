@@ -292,6 +292,7 @@ interface StudioYouTubeConnectResult {
 interface StudioYouTubeSetupLiveResult {
 	success: boolean;
 	broadcastId?: string;
+	streamId?: string;
 	ingestionAddress?: string;
 	streamName?: string;
 	error?: string;
@@ -1184,6 +1185,11 @@ interface Window {
 		studioYouTubeBroadcastStatus: (options: { broadcastId: string }) => Promise<{
 			success: boolean;
 			broadcastId?: string;
+			lifeCycleStatus?: string;
+			error?: string;
+		}>;
+		studioYouTubeGoLive: (options: { broadcastId: string; streamId: string }) => Promise<{
+			success: boolean;
 			lifeCycleStatus?: string;
 			error?: string;
 		}>;

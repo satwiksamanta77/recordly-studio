@@ -20,6 +20,8 @@ import {
 	exchangeCodeForTokens,
 	fetchLiveIngestion,
 	getYouTubeBroadcastStatus,
+	getYouTubeStreamStatus,
+	goLiveWhenStreamActive,
 	refreshAccessToken,
 	setupYouTubeLive,
 	transitionYouTubeBroadcast,
@@ -310,6 +312,7 @@ describe("setupYouTubeLive", () => {
 
 		expect(result).toEqual({
 			broadcastId: "broadcast-123",
+			streamId: "stream-456",
 			ingestionAddress: "rtmps://a.rtmps.youtube.com:443/live2",
 			streamName: "key-abc",
 		});
@@ -319,7 +322,7 @@ describe("setupYouTubeLive", () => {
 		const broadcastBody = JSON.parse(String(broadcastCall?.init?.body ?? "{}"));
 		expect(broadcastBody.snippet.title).toBe("My Stream");
 		expect(broadcastBody.status.privacyStatus).toBe("unlisted");
-		expect(broadcastBody.contentDetails.enableAutoStart).toBe(true);
+		expect(broadcastBody.contentDetails.enableAutoStart).toBe(false);
 
 		// Bind call references both IDs.
 		const bindCall = calls.find((c) => c.url.includes("/liveBroadcasts/bind"));
@@ -377,7 +380,7 @@ describe("transitionYouTubeBroadcast", () => {
 		expect(seenUrl).toContain("broadcast-123");
 	});
 
-	it("does not throw when YouTube rejects the transition (best-effort)", async () => {
+	it("throws the parsed YouTube error when the transition is rejected", async () => {
 		const fetchFn = makeFetch((url) => {
 			if (url.includes("oauth2.googleapis.com/token")) {
 				return okJson({ access_token: "fake-at", expires_in: 3600 });
@@ -391,7 +394,7 @@ describe("transitionYouTubeBroadcast", () => {
 				broadcastStatus: "complete",
 				fetchFn,
 			}),
-		).resolves.toBeUndefined();
+		).rejects.toThrow(/already live/);
 	});
 });
 
@@ -423,5 +426,95 @@ describe("getYouTubeBroadcastStatus", () => {
 
 		const result = await getYouTubeBroadcastStatus({ broadcastId: "b1", fetchFn });
 		expect(result.lifeCycleStatus).toBe("unknown");
+	});
+});
+
+describe("getYouTubeStreamStatus", () => {
+	it("returns active when YouTube is receiving", async () => {
+		const fetchFn = makeFetch((url) => {
+			if (url.includes("oauth2.googleapis.com/token")) {
+				return okJson({ access_token: "fake-at", expires_in: 3600 });
+			}
+			return okJson({
+				items: [{ id: "s1", status: { streamStatus: "active", healthStatus: { status: "good" } } }],
+			});
+		});
+		const result = await getYouTubeStreamStatus({ streamId: "s1", fetchFn });
+		expect(result).toEqual({ streamId: "s1", streamStatus: "active", healthStatus: "good" });
+	});
+});
+
+describe("goLiveWhenStreamActive", () => {
+	it("waits for active then transitions to live", async () => {
+		let streamCalls = 0;
+		const fetchFn = makeFetch((url) => {
+			if (url.includes("oauth2.googleapis.com/token")) {
+				return okJson({ access_token: "fake-at", expires_in: 3600 });
+			}
+			if (url.includes("/liveStreams?")) {
+				streamCalls += 1;
+				return okJson({
+					items: [{ id: "s1", status: { streamStatus: streamCalls < 2 ? "inactive" : "active" } }],
+				});
+			}
+			if (url.includes("/liveBroadcasts/transition")) {
+				return okJson({});
+			}
+			if (url.includes("/liveBroadcasts?")) {
+				return okJson({ items: [{ id: "b1", status: { lifeCycleStatus: "live" } }] });
+			}
+			throw new Error(`unexpected url ${url}`);
+		});
+		const status = await goLiveWhenStreamActive({
+			broadcastId: "b1",
+			streamId: "s1",
+			fetchFn,
+			pollIntervalMs: 1,
+			timeoutMs: 5000,
+		});
+		expect(status).toBe("live");
+		expect(streamCalls).toBe(2);
+	});
+
+	it("throws a clear error on timeout", async () => {
+		const fetchFn = makeFetch((url) => {
+			if (url.includes("oauth2.googleapis.com/token")) {
+				return okJson({ access_token: "fake-at", expires_in: 3600 });
+			}
+			return okJson({ items: [{ id: "s1", status: { streamStatus: "inactive" } }] });
+		});
+		await expect(
+			goLiveWhenStreamActive({
+				broadcastId: "b1",
+				streamId: "s1",
+				fetchFn,
+				pollIntervalMs: 1,
+				timeoutMs: 50,
+			}),
+		).rejects.toThrow(/timed out/i);
+	});
+});
+
+describe("youtubeApiRequest error parsing", () => {
+	it("extracts the YouTube error message and reason", async () => {
+		const fetchFn = makeFetch((url) => {
+			if (url.includes("oauth2.googleapis.com/token")) {
+				return okJson({ access_token: "fake-at", expires_in: 3600 });
+			}
+			return {
+				ok: false,
+				status: 403,
+				payload: {
+					error: {
+						code: 403,
+						message: "The request is not authorized to transition the broadcast.",
+						errors: [{ reason: "liveStreamingNotEnabled" }],
+					},
+				},
+			};
+		});
+		await expect(
+			transitionYouTubeBroadcast({ broadcastId: "b1", broadcastStatus: "live", fetchFn }),
+		).rejects.toThrow(/not authorized.*liveStreamingNotEnabled/);
 	});
 });

@@ -64,6 +64,7 @@ export function GoLiveWindow() {
 	const [diagInfo, setDiagInfo] = useState<string>("");
 	const [copied, setCopied] = useState(false);
 	const broadcastIdRef = useRef<string | null>(null);
+	const streamIdRef = useRef<string | null>(null);
 
 	const youtubeOAuth = service === "youtube" && !useManualKey;
 
@@ -293,6 +294,7 @@ export function GoLiveWindow() {
 			let rtmpServer = server.trim();
 			let rtmpKey = key;
 			let broadcastId: string | null = null;
+			let streamId: string | null = null;
 
 			if (youtubeOAuth) {
 				if (!ytConnected) {
@@ -310,6 +312,7 @@ export function GoLiveWindow() {
 				rtmpServer = setup.ingestionAddress ?? "";
 				rtmpKey = setup.streamName ?? "";
 				broadcastId = setup.broadcastId ?? null;
+				streamId = setup.streamId ?? null;
 				if (!rtmpServer || !rtmpKey) {
 					throw new Error("YouTube did not return stream details.");
 				}
@@ -333,16 +336,31 @@ export function GoLiveWindow() {
 				throw new Error(result?.error ?? "Failed to start streaming.");
 			}
 			broadcastIdRef.current = broadcastId;
-			if (broadcastId) {
-				await api?.studioYouTubeTransition?.({ broadcastId, broadcastStatus: "live" });
-			}
+			streamIdRef.current = streamId;
 			await api?.studioSettingsSet?.(STREAM_SETTINGS_KEY, { service, server });
 			if (!youtubeOAuth && rtmpKey) {
 				await api?.studioSecretSet?.(STREAM_KEY_SECRET, rtmpKey);
 			}
 			setIsLive(true);
 			setLiveSince(Date.now());
-			setStatus("You're live!");
+			if (broadcastId && streamId) {
+				// Deterministic go-live: wait until YouTube confirms it is
+				// receiving the stream, then transition the broadcast to live.
+				setStatus("Waiting for YouTube to receive your video…");
+				const goLive = await api?.studioYouTubeGoLive?.({ broadcastId, streamId });
+				if (goLive?.success) {
+					setYtLifeCycle(goLive.lifeCycleStatus ?? "live");
+					setStatus("You're live!");
+				} else {
+					setError(
+						goLive?.error ??
+							"YouTube did not go live. Your video may not be reaching YouTube — check the diagnostics below.",
+					);
+					setStatus(null);
+				}
+			} else {
+				setStatus("You're live!");
+			}
 		} catch (e) {
 			setError(e instanceof Error ? e.message : "Failed to start streaming.");
 			setStatus(null);
@@ -360,8 +378,14 @@ export function GoLiveWindow() {
 			await api?.studioStop?.();
 			const broadcastId = broadcastIdRef.current;
 			broadcastIdRef.current = null;
+			streamIdRef.current = null;
 			if (broadcastId) {
-				await api?.studioYouTubeTransition?.({ broadcastId, broadcastStatus: "complete" });
+				// Best-effort: ending the local stream matters more than the API call.
+				try {
+					await api?.studioYouTubeTransition?.({ broadcastId, broadcastStatus: "complete" });
+				} catch {
+					// Ignore — the stream is already stopped locally.
+				}
 			}
 			setIsLive(false);
 			setLiveSince(null);

@@ -120,6 +120,11 @@ export interface StudioPreloadApi {
 		lifeCycleStatus?: string;
 		error?: string;
 	}>;
+	studioYouTubeGoLive(options: { broadcastId: string; streamId: string }): Promise<{
+		success: boolean;
+		lifeCycleStatus?: string;
+		error?: string;
+	}>;
 	studioGetDisplays(): Promise<DisplayInfo[]>;
 	studioGetWindows(): Promise<WindowInfo[]>;
 	studioGetAudioDevices(): Promise<AudioDeviceInfo[]>;
@@ -146,6 +151,7 @@ export interface StudioPreloadApi {
 	}): Promise<{
 		success: boolean;
 		broadcastId?: string;
+		streamId?: string;
 		ingestionAddress?: string;
 		streamName?: string;
 		error?: string;

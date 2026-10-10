@@ -435,14 +435,30 @@ async function youtubeApiRequest(
 	const payload = await readJsonBody(response);
 	studioLog("youtube", `${method} ${path} -> HTTP ${response.status}`);
 	if (!response.ok) {
-		const message = payload["message"];
-		const errors = payload["error"];
-		const detail =
-			typeof message === "string" && message.length > 0
-				? message
-				: typeof errors === "string" && errors.length > 0
-					? errors
-					: `HTTP ${response.status}`;
+		// YouTube error shape: { error: { code, message, errors: [{ reason, message }] } }
+		const errObj = payload["error"];
+		let detail = `HTTP ${response.status}`;
+		if (errObj !== null && typeof errObj === "object") {
+			const msg = (errObj as Record<string, unknown>)["message"];
+			const errs = (errObj as Record<string, unknown>)["errors"];
+			const reasons = Array.isArray(errs)
+				? errs
+						.map((e) => {
+							if (e !== null && typeof e === "object") {
+								const r = (e as Record<string, unknown>)["reason"];
+								return typeof r === "string" ? r : null;
+							}
+							return null;
+						})
+						.filter((r): r is string => r !== null)
+				: [];
+			detail =
+				(typeof msg === "string" && msg.length > 0 ? msg : detail) +
+				(reasons.length > 0 ? ` [reasons: ${reasons.join(", ")}]` : "");
+		} else if (typeof payload["message"] === "string" && payload["message"].length > 0) {
+			detail = payload["message"];
+		}
+		studioLog("youtube", `${method} ${path} FAILED: ${detail}`);
 		throw new Error(`YouTube API error: ${detail}`);
 	}
 	return payload;
@@ -452,6 +468,7 @@ export type YouTubePrivacyStatus = "public" | "unlisted" | "private";
 
 export interface YouTubeLiveSetup {
 	broadcastId: string;
+	streamId: string;
 	ingestionAddress: string;
 	streamName: string;
 }
@@ -482,7 +499,10 @@ export async function setupYouTubeLive(opts: {
 				scheduledStartTime: new Date().toISOString(),
 			},
 			contentDetails: {
-				enableAutoStart: true,
+				// Manual go-live: we transition to "live" ourselves once YouTube
+				// confirms it is receiving the stream (streamStatus=active).
+				// Auto-start left broadcasts stuck in "ready" ("upcoming").
+				enableAutoStart: false,
 				enableAutoStop: true,
 			},
 			status: {
@@ -549,7 +569,7 @@ export async function setupYouTubeLive(opts: {
 		`ingestion via ${ingestionAddress.replace(/\/[^/]+\/?$/, "/<stream-key>")}`,
 	);
 
-	return { broadcastId, ingestionAddress, streamName };
+	return { broadcastId, streamId, ingestionAddress, streamName };
 }
 
 /**
@@ -573,11 +593,66 @@ export async function transitionYouTubeBroadcast(opts: {
 			fetchFn,
 		);
 	} catch (error) {
-		// Auto-start/auto-stop usually handles this; don't fail the session over it.
-		console.warn(
-			`[studio] YouTube transition to ${opts.broadcastStatus} failed (non-fatal):`,
-			error instanceof Error ? error.message : String(error),
+		// Log it loudly; the caller decides whether it's fatal.
+		studioLog(
+			"youtube",
+			`transition to ${opts.broadcastStatus} failed: ${error instanceof Error ? error.message : String(error)}`,
 		);
+		throw error;
+	}
+}
+
+/**
+ * Wait for YouTube's ingestion to report the stream as active, then
+ * transition the broadcast to live. This is the deterministic go-live path:
+ * never transition before YouTube is actually receiving video.
+ *
+ * Returns the final lifeCycleStatus, or throws with a clear reason.
+ */
+export async function goLiveWhenStreamActive(opts: {
+	broadcastId: string;
+	streamId: string;
+	fetchFn?: FetchFn;
+	timeoutMs?: number;
+	pollIntervalMs?: number;
+	onProgress?: (message: string) => void;
+}): Promise<string> {
+	const fetchFn = opts.fetchFn ?? fetch;
+	const timeoutMs = opts.timeoutMs ?? 90_000;
+	const pollIntervalMs = opts.pollIntervalMs ?? 5_000;
+	const progress = opts.onProgress ?? (() => {});
+	const deadline = Date.now() + timeoutMs;
+
+	studioLog("youtube", `waiting for stream ${opts.streamId} to become active…`);
+	for (;;) {
+		const streamStatus = await getYouTubeStreamStatus({ streamId: opts.streamId, fetchFn });
+		if (streamStatus.streamStatus === "active") {
+			progress("YouTube is receiving your video — going live…");
+			studioLog("youtube", "stream is active, transitioning broadcast to live");
+			await transitionYouTubeBroadcast({
+				broadcastId: opts.broadcastId,
+				broadcastStatus: "live",
+				fetchFn,
+			});
+			const broadcast = await getYouTubeBroadcastStatus({
+				broadcastId: opts.broadcastId,
+				fetchFn,
+			});
+			studioLog("youtube", `go-live complete, lifeCycleStatus=${broadcast.lifeCycleStatus}`);
+			return broadcast.lifeCycleStatus;
+		}
+		if (streamStatus.streamStatus === "error") {
+			throw new Error(
+				`YouTube reported a stream error (health: ${streamStatus.healthStatus ?? "unknown"}). Check your stream key and network.`,
+			);
+		}
+		if (Date.now() >= deadline) {
+			throw new Error(
+				`Timed out waiting for YouTube to receive your stream (streamStatus=${streamStatus.streamStatus}). Your video may not be reaching YouTube — check your firewall/antivirus allows outbound RTMPS (port 443).`,
+			);
+		}
+		progress("Waiting for YouTube to receive your video…");
+		await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
 	}
 }
 
@@ -593,6 +668,46 @@ export async function getYouTubeStatus(): Promise<{ connected: boolean; channelT
 		return { connected, channelTitle };
 	}
 	return { connected };
+}
+
+export interface YouTubeStreamStatus {
+	streamId: string;
+	streamStatus: string;
+	healthStatus?: string;
+}
+
+/**
+ * Check whether YouTube's ingestion servers are actually receiving data for
+ * a stream. streamStatus: "active" | "inactive" | "error".
+ * This is the ground truth for "is my video reaching YouTube".
+ */
+export async function getYouTubeStreamStatus(opts: {
+	streamId: string;
+	fetchFn?: FetchFn;
+}): Promise<YouTubeStreamStatus> {
+	const fetchFn = opts.fetchFn ?? fetch;
+	const accessToken = await getAccessToken(fetchFn);
+	const payload = await youtubeApiRequest(
+		"GET",
+		`${YOUTUBE_API_BASE}/liveStreams?part=status&id=${encodeURIComponent(opts.streamId)}`,
+		accessToken,
+		undefined,
+		fetchFn,
+	);
+	const item = itemsOf(payload)[0] as
+		| { status?: { streamStatus?: unknown; healthStatus?: { status?: unknown } } }
+		| undefined;
+	const streamStatus = item?.status?.streamStatus;
+	const healthStatus = item?.status?.healthStatus?.status;
+	studioLog(
+		"youtube",
+		`stream ${opts.streamId} streamStatus=${String(streamStatus)} health=${String(healthStatus)}`,
+	);
+	return {
+		streamId: opts.streamId,
+		streamStatus: typeof streamStatus === "string" ? streamStatus : "unknown",
+		healthStatus: typeof healthStatus === "string" ? healthStatus : undefined,
+	};
 }
 
 export interface YouTubeBroadcastStatus {

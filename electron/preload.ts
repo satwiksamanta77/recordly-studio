@@ -1221,4 +1221,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	studioYouTubeBroadcastStatus: (options: { broadcastId: string }) => {
 		return ipcRenderer.invoke("studio-youtube-broadcast-status", options);
 	},
+	studioYouTubeGoLive: (options: { broadcastId: string; streamId: string }) => {
+		return ipcRenderer.invoke("studio-youtube-go-live", options);
+	},
 });
