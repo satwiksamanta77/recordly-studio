@@ -311,6 +311,35 @@ describe("studio ffmpeg pipeline", () => {
 		expect(built.args.slice(outIdx)).toEqual(["-f", "flv", "rtmp://live.example.com/app/key"]);
 	});
 
+	it("disables TLS peer verification for RTMPS stream-only output (OBS parity)", () => {
+		const built = buildStudioFfmpegArgs(
+			{ items: [item("disp1")] },
+			[displaySource()],
+			baseOpts({
+				record: false,
+				stream: true,
+				rtmpUrl: "rtmps://a.rtmps.youtube.com:443/live2/key",
+			}),
+		);
+		const outIdx = built.args.lastIndexOf("-f");
+		expect(built.args.slice(outIdx - 2)).toEqual([
+			"-tls_verify",
+			"0",
+			"-f",
+			"flv",
+			"rtmps://a.rtmps.youtube.com:443/live2/key",
+		]);
+	});
+
+	it("keeps strict TLS verification for plain rtmp stream-only output", () => {
+		const built = buildStudioFfmpegArgs(
+			{ items: [item("disp1")] },
+			[displaySource()],
+			baseOpts({ record: false, stream: true, rtmpUrl: "rtmp://live.example.com/app/key" }),
+		);
+		expect(built.args).not.toContain("-tls_verify");
+	});
+
 	it("uses CRF recording flags when recording only", () => {
 		const built = buildStudioFfmpegArgs(
 			{ items: [item("disp1")] },
