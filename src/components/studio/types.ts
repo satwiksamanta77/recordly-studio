@@ -106,6 +106,20 @@ export interface StudioStartOpts {
 export interface StudioPreloadApi {
 	studioOpenWindow(): Promise<{ success: boolean }>;
 	studioOpenGoLiveWindow(): Promise<{ success: boolean }>;
+	studioGetDiagnostics(): Promise<{
+		success: boolean;
+		logs: string[];
+		logFilePath: string | null;
+		appVersion: string;
+		platform: string;
+		arch: string;
+	}>;
+	studioYouTubeBroadcastStatus(options: { broadcastId: string }): Promise<{
+		success: boolean;
+		broadcastId?: string;
+		lifeCycleStatus?: string;
+		error?: string;
+	}>;
 	studioGetDisplays(): Promise<DisplayInfo[]>;
 	studioGetWindows(): Promise<WindowInfo[]>;
 	studioGetAudioDevices(): Promise<AudioDeviceInfo[]>;

@@ -1215,4 +1215,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	studioOpenGoLiveWindow: () => {
 		return ipcRenderer.invoke("studio-open-golive-window");
 	},
+	studioGetDiagnostics: () => {
+		return ipcRenderer.invoke("studio-get-diagnostics");
+	},
+	studioYouTubeBroadcastStatus: (options: { broadcastId: string }) => {
+		return ipcRenderer.invoke("studio-youtube-broadcast-status", options);
+	},
 });

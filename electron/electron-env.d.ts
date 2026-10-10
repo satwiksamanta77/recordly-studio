@@ -1173,6 +1173,20 @@ interface Window {
 		}) => Promise<{ success: boolean; error?: string }>;
 		studioOpenWindow: () => Promise<{ success: boolean }>;
 		studioOpenGoLiveWindow: () => Promise<{ success: boolean }>;
+		studioGetDiagnostics: () => Promise<{
+			success: boolean;
+			logs: string[];
+			logFilePath: string | null;
+			appVersion: string;
+			platform: string;
+			arch: string;
+		}>;
+		studioYouTubeBroadcastStatus: (options: { broadcastId: string }) => Promise<{
+			success: boolean;
+			broadcastId?: string;
+			lifeCycleStatus?: string;
+			error?: string;
+		}>;
 	};
 }
 

@@ -19,7 +19,10 @@ import {
 	connectYouTubeAccount,
 	exchangeCodeForTokens,
 	fetchLiveIngestion,
+	getYouTubeBroadcastStatus,
 	refreshAccessToken,
+	setupYouTubeLive,
+	transitionYouTubeBroadcast,
 	YOUTUBE_OAUTH_SCOPE,
 } from "./youtube";
 
@@ -270,12 +273,6 @@ vi.mock("../secureSettingsStore", () => ({
 	deleteSecureSetting: vi.fn(),
 }));
 
-// Re-import after the mock so setupYouTubeLive sees the mocked settings.
-import {
-	setupYouTubeLive,
-	transitionYouTubeBroadcast,
-} from "./youtube";
-
 describe("setupYouTubeLive", () => {
 	it("creates a broadcast, a stream, binds them, and returns ingestion details", async () => {
 		const calls: { url: string; init?: RequestInit }[] = [];
@@ -395,5 +392,36 @@ describe("transitionYouTubeBroadcast", () => {
 				fetchFn,
 			}),
 		).resolves.toBeUndefined();
+	});
+});
+
+describe("getYouTubeBroadcastStatus", () => {
+	it("returns the lifecycle status from the API", async () => {
+		const fetchFn = makeFetch((url) => {
+			if (url.includes("oauth2.googleapis.com/token")) {
+				return okJson({ access_token: "fake-at", expires_in: 3600 });
+			}
+			if (url.includes("/liveBroadcasts?")) {
+				return okJson({
+					items: [{ id: "b1", status: { lifeCycleStatus: "live" } }],
+				});
+			}
+			throw new Error(`unexpected url ${url}`);
+		});
+
+		const result = await getYouTubeBroadcastStatus({ broadcastId: "b1", fetchFn });
+		expect(result).toEqual({ broadcastId: "b1", lifeCycleStatus: "live" });
+	});
+
+	it("returns unknown when the API has no items", async () => {
+		const fetchFn = makeFetch((url) => {
+			if (url.includes("oauth2.googleapis.com/token")) {
+				return okJson({ access_token: "fake-at", expires_in: 3600 });
+			}
+			return okJson({ items: [] });
+		});
+
+		const result = await getYouTubeBroadcastStatus({ broadcastId: "b1", fetchFn });
+		expect(result.lifeCycleStatus).toBe("unknown");
 	});
 });

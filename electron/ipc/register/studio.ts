@@ -12,6 +12,7 @@ import {
 } from "../../studio/browserSources";
 import type { MaskRect } from "../../studio/maskServer";
 import { createMaskServer } from "../../studio/maskServer";
+import { studioLog } from "../../studio/logger";
 import { startOcclusionTracker } from "../../studio/occlusion";
 import type { PipelineDisplayInfo } from "../../studio/pipeline";
 import { buildStudioFfmpegArgs } from "../../studio/pipeline";
@@ -275,6 +276,8 @@ async function startStudioSession(options: StudioStartOptions): Promise<{ succes
 			},
 		});
 		studioSupervisor = supervisor;
+		// Log sanitized args (stream key redacted by the logger).
+		studioLog("studio", `starting session mode=${mode} sources=${sources.length}`);
 		supervisor.start(args, mode);
 
 		setStudioState({
@@ -528,4 +531,34 @@ export function registerStudioHandlers() {
 		openGoLiveWindow();
 		return { success: true };
 	});
+
+	ipcMain.handle("studio-get-diagnostics", async () => {
+		const { getStudioLogs, getStudioLogFilePath } = await import("../../studio/logger");
+		const { app } = await import("electron");
+		return {
+			success: true,
+			logs: getStudioLogs(),
+			logFilePath: getStudioLogFilePath(),
+			appVersion: app.getVersion(),
+			platform: process.platform,
+			arch: process.arch,
+		};
+	});
+
+	ipcMain.handle(
+		"studio-youtube-broadcast-status",
+		async (_event, options: { broadcastId?: string }) => {
+			try {
+				const broadcastId = options?.broadcastId?.trim() ?? "";
+				if (!broadcastId) {
+					throw new Error("Missing YouTube broadcast ID.");
+				}
+				const { getYouTubeBroadcastStatus } = await import("../../studio/youtube");
+				const status = await getYouTubeBroadcastStatus({ broadcastId });
+				return { success: true, ...status };
+			} catch (error) {
+				return { success: false, error: toErrorMessage(error) };
+			}
+		},
+	);
 }

@@ -52,10 +52,17 @@ export function GoLiveWindow() {
 	const [privacy, setPrivacy] = useState<Privacy>("unlisted");
 	const [isLive, setIsLive] = useState(false);
 	const [liveSince, setLiveSince] = useState<number | null>(null);
+	const [sessionState, setSessionState] = useState<string>("idle");
+	const [sessionError, setSessionError] = useState<string | null>(null);
 	const [now, setNow] = useState(() => Date.now());
 	const [busy, setBusy] = useState(false);
 	const [status, setStatus] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [ytLifeCycle, setYtLifeCycle] = useState<string | null>(null);
+	const [showDiagnostics, setShowDiagnostics] = useState(false);
+	const [diagLogs, setDiagLogs] = useState<string[]>([]);
+	const [diagInfo, setDiagInfo] = useState<string>("");
+	const [copied, setCopied] = useState(false);
 	const broadcastIdRef = useRef<string | null>(null);
 
 	const youtubeOAuth = service === "youtube" && !useManualKey;
@@ -108,8 +115,11 @@ export function GoLiveWindow() {
 		const unsubscribe = getStudioApi()?.studioOnStateChanged?.((next: unknown) => {
 			if (cancelled) return;
 			if (typeof next !== "object" || next === null) return;
-			const s = next as { state?: unknown; mode?: unknown; startedAt?: unknown };
-			const live = s.state === "running" && s.mode === "stream";
+			const s = next as { state?: unknown; mode?: unknown; startedAt?: unknown; error?: unknown };
+			const state = typeof s.state === "string" ? s.state : "idle";
+			setSessionState(state);
+			setSessionError(typeof s.error === "string" ? s.error : null);
+			const live = state === "running" && s.mode === "stream";
 			setIsLive(live);
 			setLiveSince(live && typeof s.startedAt === "number" ? s.startedAt : null);
 			if (!live) setStatus(null);
@@ -125,6 +135,62 @@ export function GoLiveWindow() {
 		const t = setInterval(() => setNow(Date.now()), 1000);
 		return () => clearInterval(t);
 	}, [isLive]);
+
+	// Poll YouTube for the broadcast's actual lifecycle status while live.
+	useEffect(() => {
+		if (!isLive || service !== "youtube") return;
+		let cancelled = false;
+		const check = async () => {
+			const broadcastId = broadcastIdRef.current;
+			if (!broadcastId || cancelled) return;
+			try {
+				const result = await getStudioApi()?.studioYouTubeBroadcastStatus?.({ broadcastId });
+				if (!cancelled && result?.success && result.lifeCycleStatus) {
+					setYtLifeCycle(result.lifeCycleStatus);
+				}
+			} catch {
+				// Best-effort.
+			}
+		};
+		void check();
+		const t = setInterval(check, 10000);
+		return () => {
+			cancelled = true;
+			clearInterval(t);
+		};
+	}, [isLive, service]);
+
+	const loadDiagnostics = async () => {
+		try {
+			const result = await getStudioApi()?.studioGetDiagnostics?.();
+			if (result?.success) {
+				setDiagLogs(result.logs ?? []);
+				setDiagInfo(
+					`App v${result.appVersion} · ${result.platform}/${result.arch}` +
+						(result.logFilePath ? ` · log file: ${result.logFilePath}` : ""),
+				);
+			}
+		} catch {
+			// Best-effort.
+		}
+	};
+
+	const handleCopyDiagnostics = async () => {
+		const text = `${diagInfo}\n\n${diagLogs.join("\n")}`;
+		try {
+			await navigator.clipboard.writeText(text);
+		} catch {
+			// Fallback for older contexts.
+			const ta = document.createElement("textarea");
+			ta.value = text;
+			document.body.appendChild(ta);
+			ta.select();
+			document.execCommand("copy");
+			document.body.removeChild(ta);
+		}
+		setCopied(true);
+		setTimeout(() => setCopied(false), 2000);
+	};
 
 	const handleServiceChange = (next: StreamService) => {
 		setService(next);
@@ -299,6 +365,7 @@ export function GoLiveWindow() {
 			}
 			setIsLive(false);
 			setLiveSince(null);
+			setYtLifeCycle(null);
 			setStatus("Stream ended.");
 		} catch (e) {
 			setError(e instanceof Error ? e.message : "Failed to stop streaming.");
@@ -334,6 +401,40 @@ export function GoLiveWindow() {
 							<p className="mt-1 text-sm text-zinc-400">
 								Your screen is streaming. No video file is being saved.
 							</p>
+							{service === "youtube" && broadcastIdRef.current && (
+								<div className="mt-3">
+									{ytLifeCycle === "live" ? (
+										<p className="text-xs text-green-300">
+											✓ YouTube confirms: LIVE —{" "}
+											<a
+												className="underline"
+												href={`https://www.youtube.com/watch?v=${broadcastIdRef.current}`}
+												target="_blank"
+												rel="noreferrer"
+											>
+												watch your stream
+											</a>
+										</p>
+									) : ytLifeCycle ? (
+										<p className="text-xs text-amber-300">
+											YouTube status: {ytLifeCycle} — waiting for YouTube to pick up
+											the stream…
+										</p>
+									) : (
+										<p className="text-xs text-zinc-500">
+											Checking YouTube status…{" "}
+											<a
+												className="text-blue-400 underline"
+												href="https://www.youtube.com/livestreaming"
+												target="_blank"
+												rel="noreferrer"
+											>
+												open YouTube Studio
+											</a>
+										</p>
+									)}
+								</div>
+							)}
 						</div>
 						<Button
 							variant="destructive"
@@ -348,6 +449,25 @@ export function GoLiveWindow() {
 					</div>
 				) : (
 					<div className="flex flex-col gap-4">
+						{(sessionState === "reconnecting" || sessionState === "error") && (
+							<div
+								className={`rounded-lg border px-3 py-2.5 text-xs ${
+									sessionState === "reconnecting"
+										? "border-amber-800/50 bg-amber-950/30 text-amber-300"
+										: "border-red-800/50 bg-red-950/30 text-red-300"
+								}`}
+							>
+								<p className="font-medium">
+									{sessionState === "reconnecting"
+										? "Reconnecting to the stream server…"
+										: "Stream error"}
+								</p>
+								{sessionError && <p className="mt-1 opacity-80">{sessionError}</p>}
+								<p className="mt-1.5 opacity-70">
+									Check the diagnostics below for details.
+								</p>
+							</div>
+						)}
 						<div>
 							<span className={labelClass}>Service</span>
 							<div className="grid grid-cols-4 gap-1.5">
@@ -570,6 +690,47 @@ export function GoLiveWindow() {
 						</Button>
 						<p className="text-center text-[11px] text-zinc-500">
 							Streams your primary display. Nothing is saved to disk.
+						</p>
+					</div>
+				)}
+			</div>
+
+			<div className="border-t border-zinc-800 px-5 py-3">
+				<button
+					type="button"
+					className="w-full text-left text-xs text-zinc-500 underline hover:text-zinc-300"
+					onClick={() => {
+						const next = !showDiagnostics;
+						setShowDiagnostics(next);
+						if (next) void loadDiagnostics();
+					}}
+				>
+					{showDiagnostics ? "Hide diagnostics" : "Show diagnostics (for troubleshooting)"}
+				</button>
+				{showDiagnostics && (
+					<div className="mt-2">
+						{diagInfo && <p className="mb-1.5 text-[11px] text-zinc-500">{diagInfo}</p>}
+						<pre className="max-h-40 overflow-y-auto rounded-lg border border-zinc-800 bg-black/50 p-2.5 font-mono text-[10px] leading-relaxed text-zinc-400">
+							{diagLogs.length > 0 ? diagLogs.join("\n") : "No log entries yet."}
+						</pre>
+						<div className="mt-2 flex gap-2">
+							<button
+								type="button"
+								className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+								onClick={() => void loadDiagnostics()}
+							>
+								Refresh
+							</button>
+							<button
+								type="button"
+								className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+								onClick={() => void handleCopyDiagnostics()}
+							>
+								{copied ? "Copied!" : "Copy all"}
+							</button>
+						</div>
+						<p className="mt-1.5 text-[10px] text-zinc-600">
+							Secrets are redacted. Copy this when reporting an issue.
 						</p>
 					</div>
 				)}

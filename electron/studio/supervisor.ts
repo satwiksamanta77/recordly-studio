@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { getFfmpegBinaryPath } from "../ipc/ffmpeg/binary";
 import type { StudioRunState, StudioSessionMode } from "./types";
+import { studioLog } from "./logger";
 
 /** Injectable process spawner, mirroring node:child_process.spawn. */
 export type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
@@ -49,6 +50,7 @@ export function createStudioSupervisor(
 
 	const emitState = (state: StudioRunState, detail?: string) => {
 		lastState = state;
+		studioLog("ffmpeg", `state -> ${state}${detail ? ` (${detail})` : ""}`);
 		events.onStateChange?.(state, detail);
 	};
 
@@ -76,6 +78,7 @@ export function createStudioSupervisor(
 		const detail = error
 			? `ffmpeg failed to start: ${error.message}`
 			: `ffmpeg exited unexpectedly (code=${code}, signal=${signal})`;
+		studioLog("ffmpeg", `${detail}\nstderr tail:\n${stderrTail.slice(-10).join("\n")}`);
 		emitState("error", detail);
 		events.onUnexpectedExit?.({ code, signal, stderrTail: stderrTail.join("\n") });
 		if (sessionMode !== null && sessionMode.includes("stream")) {

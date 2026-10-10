@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import { readAppSetting, writeAppSetting } from "../appSettingsStore";
 import { deleteSecureSetting, readSecureSetting, writeSecureSetting } from "../secureSettingsStore";
 import { shell } from "electron";
+import { studioLog } from "./logger";
 
 export const YOUTUBE_OAUTH_SCOPE = "https://www.googleapis.com/auth/youtube";
 
@@ -413,6 +414,8 @@ async function youtubeApiRequest(
 	body: unknown,
 	fetchFn: FetchFn,
 ): Promise<Record<string, unknown>> {
+	const path = url.split("?")[0].replace(YOUTUBE_API_BASE, "");
+	studioLog("youtube", `${method} ${path}`);
 	let response: Response;
 	try {
 		response = await fetchFn(url, {
@@ -424,11 +427,13 @@ async function youtubeApiRequest(
 			body: body === undefined ? undefined : JSON.stringify(body),
 		});
 	} catch (error) {
+		studioLog("youtube", `${method} ${path} -> network error: ${error instanceof Error ? error.message : String(error)}`);
 		throw new Error(
 			`Could not reach the YouTube API: ${error instanceof Error ? error.message : String(error)}`,
 		);
 	}
 	const payload = await readJsonBody(response);
+	studioLog("youtube", `${method} ${path} -> HTTP ${response.status}`);
 	if (!response.ok) {
 		const message = payload["message"];
 		const errors = payload["error"];
@@ -491,6 +496,7 @@ export async function setupYouTubeLive(opts: {
 	if (typeof broadcastId !== "string" || broadcastId.length === 0) {
 		throw new Error("YouTube did not return a broadcast ID.");
 	}
+	studioLog("youtube", `broadcast created: id=${broadcastId}`);
 
 	const streamPayload = await youtubeApiRequest(
 		"POST",
@@ -527,6 +533,7 @@ export async function setupYouTubeLive(opts: {
 		{},
 		fetchFn,
 	);
+	studioLog("youtube", `broadcast ${broadcastId} bound to stream ${streamId}`);
 
 	return { broadcastId, ingestionAddress, streamName };
 }
@@ -542,6 +549,7 @@ export async function transitionYouTubeBroadcast(opts: {
 }): Promise<void> {
 	const fetchFn = opts.fetchFn ?? fetch;
 	const accessToken = await getAccessToken(fetchFn);
+	studioLog("youtube", `transition broadcast ${opts.broadcastId} -> ${opts.broadcastStatus}`);
 	try {
 		await youtubeApiRequest(
 			"POST",
@@ -571,4 +579,35 @@ export async function getYouTubeStatus(): Promise<{ connected: boolean; channelT
 		return { connected, channelTitle };
 	}
 	return { connected };
+}
+
+export interface YouTubeBroadcastStatus {
+	broadcastId: string;
+	lifeCycleStatus: string;
+}
+
+/**
+ * Check a broadcast's actual lifecycle status on YouTube's side.
+ * lifeCycleStatus: created | ready | testStarting | testing | liveStarting | live | complete
+ */
+export async function getYouTubeBroadcastStatus(opts: {
+	broadcastId: string;
+	fetchFn?: FetchFn;
+}): Promise<YouTubeBroadcastStatus> {
+	const fetchFn = opts.fetchFn ?? fetch;
+	const accessToken = await getAccessToken(fetchFn);
+	const payload = await youtubeApiRequest(
+		"GET",
+		`${YOUTUBE_API_BASE}/liveBroadcasts?part=status&id=${encodeURIComponent(opts.broadcastId)}`,
+		accessToken,
+		undefined,
+		fetchFn,
+	);
+	const item = itemsOf(payload)[0] as { status?: { lifeCycleStatus?: unknown } } | undefined;
+	const lifeCycleStatus = item?.status?.lifeCycleStatus;
+	studioLog("youtube", `broadcast ${opts.broadcastId} lifeCycleStatus=${String(lifeCycleStatus)}`);
+	return {
+		broadcastId: opts.broadcastId,
+		lifeCycleStatus: typeof lifeCycleStatus === "string" ? lifeCycleStatus : "unknown",
+	};
 }
