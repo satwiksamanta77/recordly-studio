@@ -537,7 +537,13 @@ export async function setupYouTubeLive(opts: {
 
 	// Prefer RTMPS (port 443) over RTMP (port 1935): port 1935 is blocked on
 	// many networks, while 443 (HTTPS) is effectively always open.
-	const ingestionAddress = rawIngestionAddress.replace(/^rtmp:\/\//i, "rtmps://");
+	// NOTE: YouTube's RTMPS endpoint uses a DIFFERENT hostname
+	// (a.rtmps.youtube.com, not a.rtmp.youtube.com) — verified against OBS's
+	// own rtmp-services definitions (plugins/rtmp-services/data/services.json).
+	const ingestionAddress = rawIngestionAddress
+		.replace(/^rtmp:\/\//i, "rtmps://")
+		.replace(/^(rtmps:\/\/[a-z]\.)rtmp\.youtube\.com/i, "$1rtmps.youtube.com")
+		.replace(/^(rtmps:\/\/[^/:]+)(?=\/|$)/i, "$1:443");
 	studioLog(
 		"youtube",
 		`ingestion via ${ingestionAddress.replace(/\/[^/]+\/?$/, "/<stream-key>")}`,

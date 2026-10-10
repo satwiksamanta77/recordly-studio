@@ -51,8 +51,8 @@ export interface StreamSettings {
 }
 
 export const SERVICE_PRESETS: Record<StreamService, { label: string; server: string }> = {
-	youtube: { label: "YouTube", server: "rtmps://a.rtmp.youtube.com/live2/" },
-	"youtube-rtmps": { label: "YouTube (RTMPS)", server: "rtmps://a.rtmp.youtube.com/live2/" },
+	youtube: { label: "YouTube", server: "rtmps://a.rtmps.youtube.com:443/live2/" },
+	"youtube-rtmps": { label: "YouTube (RTMPS)", server: "rtmps://a.rtmps.youtube.com:443/live2/" },
 	twitch: { label: "Twitch", server: "rtmp://live.twitch.tv/app/" },
 	facebook: { label: "Facebook Live", server: "rtmps://live-api-s.facebook.com:443/rtmp/" },
 	custom: { label: "Custom", server: "" },

@@ -310,7 +310,7 @@ describe("setupYouTubeLive", () => {
 
 		expect(result).toEqual({
 			broadcastId: "broadcast-123",
-			ingestionAddress: "rtmps://a.rtmp.youtube.com/live2",
+			ingestionAddress: "rtmps://a.rtmps.youtube.com:443/live2",
 			streamName: "key-abc",
 		});
 
