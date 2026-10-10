@@ -299,19 +299,6 @@ export function buildStudioFfmpegArgs(
 	} else if (opts.record) {
 		args.push("-f", "mp4", "-movflags", "+faststart", recordPath);
 	} else {
-		// Stream-only (Go Live). When pushing over RTMPS, disable ffmpeg's TLS
-		// peer verification, matching the effective behavior of OBS's
-		// librtmp-based RTMPS path. The bundled ffmpeg uses GnuTLS, which
-		// hard-fails the handshake with "The certificate's owner does not
-		// match hostname" when the presented certificate doesn't name the
-		// ingest host (e.g. an antivirus/corporate TLS interceptor on the
-		// user's network) — the exact v1.0.6 failure — while OBS-style
-		// clients connect fine on the same network. The channel stays
-		// TLS-encrypted; only the certificate identity check is skipped,
-		// and only for rtmps:// URLs. Plain rtmp:// is untouched.
-		if (/^rtmps:\/\//i.test(rtmpUrl)) {
-			args.push("-tls_verify", "0");
-		}
 		args.push("-f", "flv", rtmpUrl);
 	}
 

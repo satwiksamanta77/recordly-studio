@@ -276,8 +276,10 @@ async function startStudioSession(options: StudioStartOptions): Promise<{ succes
 			},
 		});
 		studioSupervisor = supervisor;
-		// Log sanitized args (stream key redacted by the logger).
+		// Log sanitized args (stream key redacted by the logger) so the exact
+		// ffmpeg invocation is visible in diagnostics.
 		studioLog("studio", `starting session mode=${mode} sources=${sources.length}`);
+		studioLog("ffmpeg", `command: ffmpeg ${args.map((a) => (a.includes(" ") ? `"${a}"` : a)).join(" ")}`);
 		supervisor.start(args, mode);
 
 		setStudioState({

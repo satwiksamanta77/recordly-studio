@@ -61,6 +61,11 @@ export function createStudioSupervisor(
 		if (stderrTail.length > STDERR_TAIL_LINES) {
 			stderrTail.splice(0, stderrTail.length - STDERR_TAIL_LINES);
 		}
+		// Protocol handshake lines ([rtmp], [rtmps], [tls]) reveal connection
+		// progress that stats lines don't — log them live, not just on failure.
+		if (/^\[(rtmp|rtmps|tls)\s/.test(line)) {
+			studioLog("ffmpeg", line);
+		}
 		const match = STATS_PATTERN.exec(line);
 		if (match) {
 			const frame = Number(match[1]);
@@ -71,7 +76,18 @@ export function createStudioSupervisor(
 			const now = Date.now();
 			if (now - lastStatsLogAt > 15000) {
 				lastStatsLogAt = now;
-				studioLog("ffmpeg", `encoding frame=${frame} fps=${fps}`);
+				// Include size/bitrate/speed when present — proves bytes leave ffmpeg.
+				const sizeMatch = /size=\s*(\S+)/.exec(line);
+				const bitrateMatch = /bitrate=\s*(\S+)/.exec(line);
+				const speedMatch = /speed=\s*(\S+)/.exec(line);
+				const extra = [
+					sizeMatch ? `size=${sizeMatch[1]}` : "",
+					bitrateMatch ? `bitrate=${bitrateMatch[1]}` : "",
+					speedMatch ? `speed=${speedMatch[1]}` : "",
+				]
+					.filter(Boolean)
+					.join(" ");
+				studioLog("ffmpeg", `encoding frame=${frame} fps=${fps}${extra ? ` ${extra}` : ""}`);
 			}
 		}
 	};
